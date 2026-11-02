@@ -1,0 +1,406 @@
+﻿python.exe : 442 INFO: PyInstaller: 6.22.3, contrib hooks: 2026.9
+At line:4 char:16
++ ... D:\Shaneen; & .\.venv\Scripts\python.exe -m PyInstaller --noconfirm - ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (442 INFO: PyIns...b hooks: 2026.9:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+443 INFO: Python: 3.15.0
+480 INFO: Platform: Windows-11-10.0.22621-SP0
+480 INFO: Python environment: D:\Shaneen\.venv
+481 INFO: wrote D:\Shaneen\Shaheen.spec
+484 INFO: Removing temporary files and cleaning cache in C:\Users\ST\AppData\Local\pyinstaller
+262 WARNING: Failed to collect submodules for 'scapy.modules.krack' because importing 'scapy.modules.krack' raised: 
+ImportError: Cannot import Krack module due to missing dependency. Please install python{3}-cryptography v1.7+.
+WARNING: Failed to register CBOR object <class 'scapy.cbor.cbor.CBOR_Object'>
+WARNING: Failed to register CBOR object <class 'scapy.cbor.cbor._CBOR_ERROR'>
+WARNING: more Failed to register CBOR object <class 'scapy.cbor.cbor.CBOR_DECODING_ERROR'>
+2332 INFO: Module search paths (PYTHONPATH):
+['D:\\Shaneen',
+ 'C:\\Users\\ST\\AppData\\Local\\Python\\pythoncore-3.15-64\\python315.zip',
+ 'C:\\Users\\ST\\AppData\\Local\\Python\\pythoncore-3.15-64\\DLLs',
+ 'C:\\Users\\ST\\AppData\\Local\\Python\\pythoncore-3.15-64\\Lib',
+ 'C:\\Users\\ST\\AppData\\Local\\Python\\pythoncore-3.15-64',
+ 'D:\\Shaneen\\.venv',
+ 'D:\\Shaneen\\.venv\\Lib\\site-packages',
+ 'D:\\Shaneen']
+2854 INFO: Appending 'datas' from .spec
+2877 INFO: checking Analysis
+2877 INFO: Building Analysis because Analysis-00.toc is non existent
+2877 INFO: Looking for Python shared library...
+2877 INFO: Using Python shared library: C:\Users\ST\AppData\Local\Python\pythoncore-3.15-64\python315.dll
+2877 INFO: Running Analysis Analysis-00.toc
+2877 INFO: Target bytecode optimization level: 0
+2877 INFO: Initializing module dependency graph...
+2879 INFO: Initializing module graph hook caches...
+2905 INFO: Analyzing modules for base_library.zip ...
+4741 INFO: Processing standard module hook 'hook-math.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+4921 INFO: Processing standard module hook 'hook-encodings.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+9183 INFO: Processing standard module hook 'hook-difflib.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+9206 INFO: Processing standard module hook 'hook-heapq.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+9746 INFO: Processing standard module hook 'hook-pickle.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+11310 INFO: Caching module dependency graph...
+11355 INFO: Analyzing D:\Shaneen\main.py
+11367 INFO: Processing standard module hook 'hook-sqlite3.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+12041 INFO: Processing standard module hook 'hook-platform.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+12112 INFO: Processing standard module hook 'hook-sysconfig.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+12122 INFO: Processing standard module hook 'hook-_ctypes.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+13195 INFO: Processing standard module hook 'hook-matplotlib.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+13712 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+13717 INFO: SetuptoolsInfo: initializing cached setuptools info...
+14599 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+15093 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+15281 INFO: Processing standard module hook 'hook-xml.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+16649 INFO: Processing standard module hook 'hook-numpy.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+18287 INFO: Processing standard module hook 'hook-webbrowser.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+22374 INFO: Processing standard module hook 'hook-charset_normalizer.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+23474 INFO: Processing standard module hook 'hook-matplotlib.backend_bases.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+23753 INFO: Processing standard module hook 'hook-PIL.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+23983 INFO: Processing standard module hook 'hook-PIL.Image.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+24639 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+25066 INFO: Processing standard module hook 'hook-PIL.ImageFilter.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+26770 INFO: Processing standard module hook 'hook-matplotlib.backends.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+26989 INFO: Processing standard module hook 'hook-matplotlib.pyplot.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+27282 INFO: Processing standard module hook 'hook-matplotlib.figure.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+28717 INFO: Processing standard module hook 'hook-dateutil.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+28744 INFO: Processing standard module hook 'hook-zoneinfo.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+28918 INFO: Processing pre-safe-import-module hook 'hook-six.moves.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+32054 INFO: Processing standard module hook 'hook-pandas.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+37358 INFO: Processing standard module hook 'hook-pandas.io.formats.style.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+42654 INFO: Processing standard module hook 'hook-pandas.plotting.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+45559 INFO: Processing standard module hook 'hook-xml.dom.domreg.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+46774 INFO: Processing standard module hook 'hook-pandas.io.clipboard.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+47171 INFO: Processing standard module hook 'hook-pytest.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+47614 INFO: Processing standard module hook 'hook-pygments.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+49448 INFO: Processing standard module hook 'hook-py.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+50443 INFO: Processing pre-safe-import-module hook 'hook-tomli.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+50444 INFO: Setuptools: 'tomli' appears to be a setuptools-vendored copy - creating alias to 
+'setuptools._vendor.tomli'!
+50463 INFO: Processing standard module hook 'hook-setuptools.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+50495 INFO: Processing pre-safe-import-module hook 'hook-distutils.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+50547 INFO: Processing pre-safe-import-module hook 'hook-jaraco.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+50548 INFO: Setuptools: 'jaraco' appears to be a full setuptools-vendored copy - creating alias to 
+'setuptools._vendor.jaraco'!
+50580 INFO: Processing pre-safe-import-module hook 'hook-more_itertools.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+50581 INFO: Setuptools: 'more_itertools' appears to be a setuptools-vendored copy - creating alias to 
+'setuptools._vendor.more_itertools'!
+50848 INFO: Processing standard module hook 'hook-_osx_support.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+51499 INFO: Processing standard module hook 'hook-setuptools._vendor.jaraco.text.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+51501 INFO: Processing pre-safe-import-module hook 'hook-importlib_resources.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+51521 INFO: Processing pre-safe-import-module hook 'hook-backports.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+51524 INFO: Setuptools: 'backports' appears to be a full setuptools-vendored copy - creating alias to 
+'setuptools._vendor.backports'!
+53711 INFO: Processing pre-safe-import-module hook 'hook-wheel.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+53712 INFO: Setuptools: 'wheel' appears to be a setuptools-vendored copy - creating alias to 
+'setuptools._vendor.wheel'!
+56003 INFO: Processing pre-safe-import-module hook 'hook-gi.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+60429 INFO: Processing pre-find-module-path hook 'hook-tkinter.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+60439 INFO: TclTkInfo: initializing cached Tcl/Tk info...
+61751 INFO: Processing standard module hook 'hook-_tkinter.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+62782 INFO: Processing standard module hook 'hook-scapy.layers.all.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+63704 INFO: Processing standard module hook 'hook-customtkinter.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+65036 INFO: Processing standard module hook 'hook-reportlab.lib.utils.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+65235 INFO: Processing standard module hook 'hook-reportlab.pdfbase._fontdata.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+69322 INFO: Analyzing hidden import 'scapy.__main__'
+69323 INFO: Analyzing hidden import 'scapy.cbor'
+69450 INFO: Analyzing hidden import 'scapy.contrib.altbeacon'
+69750 INFO: Analyzing hidden import 'scapy.contrib.aoe'
+69757 INFO: Analyzing hidden import 'scapy.contrib.automotive'
+69758 INFO: Analyzing hidden import 'scapy.contrib.automotive.autosar'
+69765 INFO: Analyzing hidden import 'scapy.contrib.automotive.autosar.pdu'
+69769 INFO: Analyzing hidden import 'scapy.contrib.automotive.autosar.secoc'
+69779 INFO: Analyzing hidden import 'scapy.contrib.automotive.autosar.secoc_canfd'
+69962 INFO: Analyzing hidden import 'scapy.contrib.automotive.autosar.secoc_pdu'
+69970 INFO: Analyzing hidden import 'scapy.contrib.automotive.bmw'
+69972 INFO: Analyzing hidden import 'scapy.contrib.automotive.bmw.definitions'
+72282 INFO: Analyzing hidden import 'scapy.contrib.automotive.bmw.enumerator'
+73280 INFO: Analyzing hidden import 'scapy.contrib.automotive.bmw.hsfz'
+73317 INFO: Analyzing hidden import 'scapy.contrib.automotive.ccp'
+73374 INFO: Analyzing hidden import 'scapy.contrib.automotive.doip'
+73407 INFO: Analyzing hidden import 'scapy.contrib.automotive.gm'
+73414 INFO: Analyzing hidden import 'scapy.contrib.automotive.gm.gmlan'
+73579 INFO: Analyzing hidden import 'scapy.contrib.automotive.gm.gmlan_ecu_states'
+73585 INFO: Analyzing hidden import 'scapy.contrib.automotive.gm.gmlan_logging'
+73609 INFO: Analyzing hidden import 'scapy.contrib.automotive.gm.gmlan_scanner'
+73706 INFO: Analyzing hidden import 'scapy.contrib.automotive.kwp'
+73824 INFO: Analyzing hidden import 'scapy.contrib.automotive.obd'
+73826 INFO: Analyzing hidden import 'scapy.contrib.automotive.obd.iid'
+73828 INFO: Analyzing hidden import 'scapy.contrib.automotive.obd.iid.iids'
+73872 INFO: Analyzing hidden import 'scapy.contrib.automotive.obd.mid'
+73874 INFO: Analyzing hidden import 'scapy.contrib.automotive.obd.mid.mids'
+73993 INFO: Analyzing hidden import 'scapy.contrib.automotive.obd.obd'
+74445 INFO: Analyzing hidden import 'scapy.contrib.automotive.obd.scanner'
+74481 INFO: Analyzing hidden import 'scapy.contrib.automotive.someip'
+74520 INFO: Analyzing hidden import 'scapy.contrib.automotive.uds_logging'
+74550 INFO: Analyzing hidden import 'scapy.contrib.automotive.volkswagen'
+74555 INFO: Analyzing hidden import 'scapy.contrib.automotive.volkswagen.definitions'
+75076 INFO: Analyzing hidden import 'scapy.contrib.automotive.xcp'
+75077 INFO: Analyzing hidden import 'scapy.contrib.automotive.xcp.cto_commands_master'
+75145 INFO: Analyzing hidden import 'scapy.contrib.automotive.xcp.cto_commands_slave'
+75270 INFO: Analyzing hidden import 'scapy.contrib.automotive.xcp.scanner'
+75478 INFO: Analyzing hidden import 'scapy.contrib.avs'
+76238 INFO: Analyzing hidden import 'scapy.contrib.bfd'
+76245 INFO: Analyzing hidden import 'scapy.contrib.bgp'
+76478 INFO: Analyzing hidden import 'scapy.contrib.bier'
+76490 INFO: Analyzing hidden import 'scapy.contrib.bluetooth_vsc_barrot'
+76510 INFO: Analyzing hidden import 'scapy.contrib.bluetooth_vsc_csr'
+76529 INFO: Analyzing hidden import 'scapy.contrib.bluetooth_vsc_espressif'
+76561 INFO: Analyzing hidden import 'scapy.contrib.bluetooth_vsc_intel'
+76586 INFO: Analyzing hidden import 'scapy.contrib.bluetooth_vsc_realtek'
+76595 INFO: Analyzing hidden import 'scapy.contrib.bluetooth_vsc_zephyr'
+76612 INFO: Analyzing hidden import 'scapy.contrib.bp'
+76672 INFO: Analyzing hidden import 'scapy.contrib.carp'
+76692 INFO: Analyzing hidden import 'scapy.contrib.cdp'
+76819 INFO: Analyzing hidden import 'scapy.contrib.chdlc'
+76837 INFO: Analyzing hidden import 'scapy.contrib.coap'
+76882 INFO: Analyzing hidden import 'scapy.contrib.coap_socket'
+77388 INFO: Analyzing hidden import 'scapy.contrib.concox'
+77420 INFO: Analyzing hidden import 'scapy.contrib.diameter'
+77939 INFO: Analyzing hidden import 'scapy.contrib.dicom'
+78085 INFO: Analyzing hidden import 'scapy.contrib.dtp'
+78100 INFO: Analyzing hidden import 'scapy.contrib.eddystone'
+78122 INFO: Analyzing hidden import 'scapy.contrib.eigrp'
+78203 INFO: Analyzing hidden import 'scapy.contrib.enipTCP'
+78223 INFO: Analyzing hidden import 'scapy.contrib.erspan'
+78230 INFO: Analyzing hidden import 'scapy.contrib.esmc'
+78238 INFO: Analyzing hidden import 'scapy.contrib.ethercat'
+78273 INFO: Analyzing hidden import 'scapy.contrib.etherip'
+78276 INFO: Analyzing hidden import 'scapy.contrib.exposure_notification'
+78280 INFO: Analyzing hidden import 'scapy.contrib.geneve'
+78288 INFO: Analyzing hidden import 'scapy.contrib.gtp'
+78632 INFO: Analyzing hidden import 'scapy.contrib.gxrp'
+78648 INFO: Analyzing hidden import 'scapy.contrib.hicp'
+78675 INFO: Analyzing hidden import 'scapy.contrib.homeplugav'
+78824 INFO: Analyzing hidden import 'scapy.contrib.homepluggp'
+78847 INFO: Analyzing hidden import 'scapy.contrib.homeplugsg'
+78851 INFO: Analyzing hidden import 'scapy.contrib.ibeacon'
+78857 INFO: Analyzing hidden import 'scapy.contrib.icmp_extensions'
+78869 INFO: Analyzing hidden import 'scapy.contrib.ife'
+78874 INFO: Analyzing hidden import 'scapy.contrib.igmp'
+78905 INFO: Analyzing hidden import 'scapy.contrib.igmpv3'
+78906 INFO: Analyzing hidden import 'scapy.contrib.ikev2'
+79159 INFO: Analyzing hidden import 'scapy.contrib.isis'
+79252 INFO: Analyzing hidden import 'scapy.contrib.j1939'
+79351 INFO: Analyzing hidden import 'scapy.contrib.knx'
+79401 INFO: Analyzing hidden import 'scapy.contrib.lacp'
+79406 INFO: Analyzing hidden import 'scapy.contrib.ldp'
+79436 INFO: Analyzing hidden import 'scapy.contrib.lldp'
+79509 INFO: Analyzing hidden import 'scapy.contrib.loraphy2wan'
+79578 INFO: Analyzing hidden import 'scapy.contrib.mac_control'
+79591 INFO: Analyzing hidden import 'scapy.contrib.macsec'
+79609 INFO: Analyzing hidden import 'scapy.contrib.metawatch'
+79614 INFO: Analyzing hidden import 'scapy.contrib.modbus'
+79685 INFO: Analyzing hidden import 'scapy.contrib.mount'
+79806 INFO: Analyzing hidden import 'scapy.contrib.mqtt'
+79836 INFO: Analyzing hidden import 'scapy.contrib.mqttsn'
+79865 INFO: Analyzing hidden import 'scapy.contrib.mysql'
+79922 INFO: Analyzing hidden import 'scapy.contrib.nlm'
+79952 INFO: Analyzing hidden import 'scapy.contrib.nrf_sniffer'
+80014 INFO: Analyzing hidden import 'scapy.contrib.nsh'
+80039 INFO: Analyzing hidden import 'scapy.contrib.oam'
+80074 INFO: Analyzing hidden import 'scapy.contrib.opc_da'
+80136 INFO: Analyzing hidden import 'scapy.contrib.openflow'
+80473 INFO: Analyzing hidden import 'scapy.contrib.ospf'
+80537 INFO: Analyzing hidden import 'scapy.contrib.pfcp'
+80751 INFO: Analyzing hidden import 'scapy.contrib.pim'
+80778 INFO: Analyzing hidden import 'scapy.contrib.pnio'
+80931 INFO: Analyzing hidden import 'scapy.contrib.portmap'
+80936 INFO: Analyzing hidden import 'scapy.contrib.postgres'
+81131 INFO: Analyzing hidden import 'scapy.contrib.ppi_cace'
+81139 INFO: Analyzing hidden import 'scapy.contrib.ppi_geotag'
+81287 INFO: Analyzing hidden import 'scapy.contrib.psp'
+81306 INFO: Analyzing hidden import 'scapy.contrib.ptp_v2'
+81394 INFO: Analyzing hidden import 'scapy.contrib.ripng'
+81400 INFO: Analyzing hidden import 'scapy.contrib.roce'
+81445 INFO: Analyzing hidden import 'scapy.contrib.rpl'
+81480 INFO: Analyzing hidden import 'scapy.contrib.rpl_metrics'
+81532 INFO: Analyzing hidden import 'scapy.contrib.rsvp'
+81553 INFO: Analyzing hidden import 'scapy.contrib.rtcp'
+81566 INFO: Analyzing hidden import 'scapy.contrib.rtr'
+81583 INFO: Analyzing hidden import 'scapy.contrib.rtsp'
+81588 INFO: Analyzing hidden import 'scapy.contrib.scada'
+81802 INFO: Analyzing hidden import 'scapy.contrib.scada.pcom'
+81820 INFO: Analyzing hidden import 'scapy.contrib.sebek'
+81834 INFO: Analyzing hidden import 'scapy.contrib.send'
+81844 INFO: Analyzing hidden import 'scapy.contrib.skinny'
+81874 INFO: Analyzing hidden import 'scapy.contrib.socks'
+81884 INFO: Analyzing hidden import 'scapy.contrib.stamp'
+81988 INFO: Analyzing hidden import 'scapy.contrib.stun'
+82013 INFO: Analyzing hidden import 'scapy.contrib.tacacs'
+82049 INFO: Analyzing hidden import 'scapy.contrib.tcpao'
+82067 INFO: Analyzing hidden import 'scapy.contrib.tcpros'
+82085 INFO: Analyzing hidden import 'scapy.contrib.tzsp'
+82111 INFO: Analyzing hidden import 'scapy.contrib.vqp'
+82114 INFO: Analyzing hidden import 'scapy.contrib.vtp'
+82128 INFO: Analyzing hidden import 'scapy.contrib.wireguard'
+82133 INFO: Analyzing hidden import 'scapy.fwdmachine'
+82443 INFO: Analyzing hidden import 'scapy.layers.dhcp'
+82511 INFO: Analyzing hidden import 'scapy.layers.dhcp6'
+82642 INFO: Analyzing hidden import 'scapy.layers.dot15d4'
+82875 INFO: Analyzing hidden import 'scapy.layers.gprs'
+82880 INFO: Analyzing hidden import 'scapy.layers.hsrp'
+82898 INFO: Analyzing hidden import 'scapy.layers.ir'
+82901 INFO: Analyzing hidden import 'scapy.layers.l2tp'
+82909 INFO: Analyzing hidden import 'scapy.layers.llmnr'
+82917 INFO: Analyzing hidden import 'scapy.layers.lltd'
+82978 INFO: Analyzing hidden import 'scapy.layers.mgcp'
+82982 INFO: Analyzing hidden import 'scapy.layers.mobileip'
+82986 INFO: Analyzing hidden import 'scapy.layers.ms_nrtp'
+83036 INFO: Analyzing hidden import 'scapy.layers.msrpce.all'
+83109 INFO: Analyzing hidden import 'scapy.layers.msrpce.msdcom'
+83200 INFO: Analyzing hidden import 'scapy.layers.msrpce.msdrsr'
+83225 INFO: Analyzing hidden import 'scapy.layers.msrpce.mseerr'
+83263 INFO: Analyzing hidden import 'scapy.layers.msrpce.raw.ms_rrp'
+83316 INFO: Analyzing hidden import 'scapy.layers.msrpce.raw.ms_samr'
+83331 INFO: Analyzing hidden import 'scapy.layers.msrpce.raw.ms_wkst'
+83347 INFO: Analyzing hidden import 'scapy.layers.msrpce.rpcserver'
+83516 INFO: Analyzing hidden import 'scapy.layers.netflow'
+83704 INFO: Analyzing hidden import 'scapy.layers.pflog'
+83715 INFO: Analyzing hidden import 'scapy.layers.pptp'
+83738 INFO: Analyzing hidden import 'scapy.layers.radius'
+83828 INFO: Analyzing hidden import 'scapy.layers.rip'
+83835 INFO: Analyzing hidden import 'scapy.layers.rtp'
+83842 INFO: Analyzing hidden import 'scapy.layers.skinny'
+83847 INFO: Analyzing hidden import 'scapy.layers.snmp'
+83874 INFO: Analyzing hidden import 'scapy.layers.ssh'
+83994 INFO: Analyzing hidden import 'scapy.layers.tftp'
+84056 INFO: Analyzing hidden import 'scapy.layers.tls.tools'
+84068 INFO: Analyzing hidden import 'scapy.layers.tuntap'
+84082 INFO: Analyzing hidden import 'scapy.layers.usb'
+84095 INFO: Analyzing hidden import 'scapy.layers.windows.registry'
+84132 INFO: Analyzing hidden import 'scapy.modules.ldaphero'
+84313 INFO: Analyzing hidden import 'scapy.modules.p0f'
+84396 INFO: Analyzing hidden import 'scapy.modules.p0fv2'
+84465 INFO: Analyzing hidden import 'scapy.modules.voip'
+84480 INFO: Analyzing hidden import 'scapy.tools'
+84481 INFO: Analyzing hidden import 'scapy.tools.UTscapy'
+84575 INFO: Analyzing hidden import 'scapy.tools.automotive'
+84580 INFO: Analyzing hidden import 'scapy.tools.automotive.isotpscanner'
+84607 INFO: Analyzing hidden import 'scapy.tools.automotive.obdscanner'
+84662 INFO: Analyzing hidden import 'scapy.tools.automotive.xcpscanner'
+84679 INFO: Analyzing hidden import 'scapy.tools.check_asdis'
+84690 INFO: Analyzing hidden import 'scapy.tools.generate_bluetooth'
+84696 INFO: Analyzing hidden import 'scapy.tools.generate_ethertypes'
+84710 INFO: Analyzing hidden import 'scapy.tools.generate_manuf'
+84716 INFO: Analyzing hidden import 'scapy.tools.scapy_pyannotate'
+84724 INFO: Processing module hooks (post-graph stage)...
+85042 INFO: Processing standard module hook 'hook-matplotlib.backends.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+85043 INFO: Matplotlib backend selection method: automatic discovery of used backends
+85808 INFO: Trying determine the default backend as first importable candidate from the list: ['QtAgg', 'Qt5Agg', 
+'Gtk4Agg', 'Gtk3Agg', 'TkAgg', 'WxAgg']
+91879 INFO: Selected matplotlib backends: ['TkAgg']
+91879 INFO: Extra dists for selected matplotlib backends: []
+93442 INFO: Processing standard module hook 'hook-PIL.SpiderImagePlugin.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+101235 INFO: Processing standard module hook 'hook-_tkinter.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+101237 INFO: Processing standard module hook 'hook-tzdata.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+102181 INFO: Performing binary vs. data reclassification (1239 entries)
+102530 INFO: Looking for ctypes DLLs
+103002 WARNING: Ignoring AppKit.framework/AppKit imported from 
+D:\Shaneen\.venv\Lib\site-packages\darkdetect\_mac_detect.py - only basenames are supported with ctypes imports!
+103219 INFO: Analyzing run-time hooks ...
+103236 INFO: Including run-time hook 'pyi_rth_inspect.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+103246 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+103250 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+103254 INFO: Including run-time hook 'pyi_rth__tkinter.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+103260 INFO: Including run-time hook 'pyi_rth_setuptools.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+103263 INFO: Including run-time hook 'pyi_rth_mplconfig.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+103265 INFO: Processing pre-find-module-path hook 'hook-_pyi_rth_utils.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+103268 INFO: Processing standard module hook 'hook-_pyi_rth_utils.py' from 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+103378 INFO: Creating base_library.zip...
+103416 INFO: Looking for dynamic libraries
+WARNING: Failed to register CBOR object <class 'scapy.cbor.cbor.CBOR_Object'>
+WARNING: Failed to register CBOR object <class 'scapy.cbor.cbor._CBOR_ERROR'>
+WARNING: more Failed to register CBOR object <class 'scapy.cbor.cbor.CBOR_DECODING_ERROR'>
+107024 INFO: Extra DLL search directories (AddDllDirectory): ['D:\\Shaneen\\.venv\\Lib\\site-packages\\numpy.libs', 
+'D:\\Shaneen\\.venv\\Lib\\site-packages\\pandas.libs']
+107024 INFO: Extra DLL search directories (PATH): ['C:\\Windows\\System32\\Npcap']
+108477 INFO: Warnings written to D:\Shaneen\build\Shaheen\warn-Shaheen.txt
+108801 INFO: Graph cross-reference written to D:\Shaneen\build\Shaheen\xref-Shaheen.html
+108944 INFO: checking PYZ
+108945 INFO: Building PYZ because PYZ-00.toc is non existent
+108945 INFO: Building PYZ (ZlibArchive) D:\Shaneen\build\Shaheen\PYZ-00.pyz
+111352 INFO: Building PYZ (ZlibArchive) D:\Shaneen\build\Shaheen\PYZ-00.pyz completed successfully.
+111480 INFO: checking PKG
+111480 INFO: Building PKG because PKG-00.toc is non existent
+111480 INFO: Building PKG (CArchive) Shaheen.pkg
+111553 INFO: Building PKG (CArchive) Shaheen.pkg completed successfully.
+111555 INFO: Bootloader D:\Shaneen\.venv\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+111555 INFO: checking EXE
+111555 INFO: Building EXE because EXE-00.toc is non existent
+111555 INFO: Building EXE from EXE-00.toc
+111555 INFO: Copying bootloader EXE to D:\Shaneen\build\Shaheen\Shaheen.exe
+112031 INFO: Copying icon to EXE
+112127 INFO: Copying 0 resources to EXE
+112127 INFO: Embedding manifest in EXE
+112232 INFO: Appending PKG archive to EXE
+112354 INFO: Fixing EXE headers
+115461 INFO: Building EXE from EXE-00.toc completed successfully.
+115479 INFO: checking COLLECT
+115479 INFO: Building COLLECT because COLLECT-00.toc is non existent
+115480 INFO: Building COLLECT COLLECT-00.toc
+120576 INFO: Building COLLECT COLLECT-00.toc completed successfully.

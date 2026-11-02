@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.pytest_cache/
+logs/*.log
+reports_output/
+*.db
+*.sqlite3
+.DS_Store
+build/
+dist/
+*.spec
+captures/*.pcap
+captures/*.pcapng
+.andromity/

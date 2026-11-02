@@ -1,0 +1,10 @@
+DEFAULT_THEME = "dark"
+DEFAULT_HOST = "localhost"
+DEFAULT_DATABASE_PATH = "data/shaheen.db"
+DEFAULT_CAPTURE_PATH = "captures"
+DEFAULT_REPORT_PATH = "reports_output"
+DEFAULT_LOG_PATH = "logs/shaheen.log"
+DEFAULT_AI_PROVIDER = "mock"
+DEFAULT_AI_MODEL = "mock-model"
+DEFAULT_SNAP_LENGTH = 65535
+DEFAULT_FILTER = ""

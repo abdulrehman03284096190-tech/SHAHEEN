@@ -1,0 +1,50 @@
+﻿        self.packet_table_container = ctk.CTkFrame(: D:\Shaneen\gui\main_window.py:418:        self.packet_table_container = ctk.CTkFrame(
+        self.packet_table_container.grid_rowconfigure(0, weight=1): D:\Shaneen\gui\main_window.py:423:        self.packet_table_container.grid_rowconfigure(0, weight=1)
+        self.packet_table_container.grid_columnconfigure(0, weight=1): D:\Shaneen\gui\main_window.py:424:        self.packet_table_container.grid_columnconfigure(0, weight=1)
+        self.packet_table = ttk.Treeview(: D:\Shaneen\gui\main_window.py:426:        self.packet_table = ttk.Treeview(
+            self.packet_table_container,: D:\Shaneen\gui\main_window.py:427:            self.packet_table_container,
+            self.packet_table.heading(column, text=heading, anchor=anchor): D:\Shaneen\gui\main_window.py:443:            self.packet_table.heading(column, text=heading, anchor=anchor)
+            self.packet_table.column(: D:\Shaneen\gui\main_window.py:444:            self.packet_table.column(
+        self.packet_table.grid(row=0, column=0, sticky="nsew"): D:\Shaneen\gui\main_window.py:451:        self.packet_table.grid(row=0, column=0, sticky="nsew")
+            self.packet_table_container,: D:\Shaneen\gui\main_window.py:453:            self.packet_table_container,
+            command=self.packet_table.yview,: D:\Shaneen\gui\main_window.py:455:            command=self.packet_table.yview,
+            self.packet_table_container,: D:\Shaneen\gui\main_window.py:459:            self.packet_table_container,
+            command=self.packet_table.xview,: D:\Shaneen\gui\main_window.py:461:            command=self.packet_table.xview,
+        self.packet_table.configure(: D:\Shaneen\gui\main_window.py:464:        self.packet_table.configure(
+        self.packet_empty_label = ctk.CTkLabel(: D:\Shaneen\gui\main_window.py:468:        self.packet_empty_label = ctk.CTkLabel(
+            self.packet_table_container,: D:\Shaneen\gui\main_window.py:469:            self.packet_table_container,
+        self.packet_empty_label.place(relx=0.5, rely=0.55, anchor="center"): D:\Shaneen\gui\main_window.py:476:        self.packet_empty_label.place(relx=0.5, rely=0.55, anchor="center")
+        self.packet_table.bind("<<TreeviewSelect>>", self._on_packet_table_select): D:\Shaneen\gui\main_window.py:478:        self.packet_table.bind("<<TreeviewSelect>>", self._on_packet_table_select)
+        self.workspace.add(self.packet_table_container, weight=5): D:\Shaneen\gui\main_window.py:520:        self.workspace.add(self.packet_table_container, weight=5)
+        self._update_table_empty_state(): D:\Shaneen\gui\main_window.py:604:        self._update_table_empty_state()
+        self._render_packet_table([]): D:\Shaneen\gui\main_window.py:1345:        self._render_packet_table([])
+        self._update_table_empty_state(): D:\Shaneen\gui\main_window.py:1352:        self._update_table_empty_state()
+            self._render_packet_table(): D:\Shaneen\gui\main_window.py:1485:            self._render_packet_table()
+        self._update_table_empty_state(): D:\Shaneen\gui\main_window.py:1487:        self._update_table_empty_state()
+            self._update_table_empty_state(): D:\Shaneen\gui\main_window.py:1508:            self._update_table_empty_state()
+        self._render_packet_table(filtered): D:\Shaneen\gui\main_window.py:1535:        self._render_packet_table(filtered)
+            self._render_packet_table(): D:\Shaneen\gui\main_window.py:1556:            self._render_packet_table()
+    def _packet_table_values(packet: PacketRecord) -> tuple[str, ...]:: D:\Shaneen\gui\main_window.py:1640:    def _packet_table_values(packet: PacketRecord) -> tuple[str, ...]:
+    def _packet_table_iid(packet: PacketRecord, index: int) -> str:: D:\Shaneen\gui\main_window.py:1659:    def _packet_table_iid(packet: PacketRecord, index: int) -> str:
+    def _update_table_empty_state(self) -> None:: D:\Shaneen\gui\main_window.py:1664:    def _update_table_empty_state(self) -> None:
+            self.packet_empty_label.place_forget(): D:\Shaneen\gui\main_window.py:1666:            self.packet_empty_label.place_forget()
+        self.packet_empty_label.configure(text=message): D:\Shaneen\gui\main_window.py:1683:        self.packet_empty_label.configure(text=message)
+        self.packet_empty_label.place(relx=0.5, rely=0.55, anchor="center"): D:\Shaneen\gui\main_window.py:1684:        self.packet_empty_label.place(relx=0.5, rely=0.55, anchor="center")
+    def _render_packet_table(: D:\Shaneen\gui\main_window.py:1686:    def _render_packet_table(
+        children = self.packet_table.get_children(""): D:\Shaneen\gui\main_window.py:1704:        children = self.packet_table.get_children("")
+            self.packet_table.delete(*children): D:\Shaneen\gui\main_window.py:1706:            self.packet_table.delete(*children)
+            iid = self._packet_table_iid(packet, index): D:\Shaneen\gui\main_window.py:1709:            iid = self._packet_table_iid(packet, index)
+            self.packet_table.insert(: D:\Shaneen\gui\main_window.py:1711:            self.packet_table.insert(
+                values=self._packet_table_values(packet),: D:\Shaneen\gui\main_window.py:1715:                values=self._packet_table_values(packet),
+        self.packet_table.tag_configure("even", background="#0F172A"): D:\Shaneen\gui\main_window.py:1718:        self.packet_table.tag_configure("even", background="#0F172A")
+        self.packet_table.tag_configure("odd", background="#111C30"): D:\Shaneen\gui\main_window.py:1719:        self.packet_table.tag_configure("odd", background="#111C30")
+        self._update_table_empty_state(): D:\Shaneen\gui\main_window.py:1720:        self._update_table_empty_state()
+    def _on_packet_table_select(self, _event=None) -> None:: D:\Shaneen\gui\main_window.py:1753:    def _on_packet_table_select(self, _event=None) -> None:
+        selection = self.packet_table.selection(): D:\Shaneen\gui\main_window.py:1754:        selection = self.packet_table.selection()
+            self.packet_table.selection_set(iid): D:\Shaneen\gui\main_window.py:1785:            self.packet_table.selection_set(iid)
+            self.packet_table.focus(iid): D:\Shaneen\gui\main_window.py:1786:            self.packet_table.focus(iid)
+            self.packet_table.see(iid): D:\Shaneen\gui\main_window.py:1787:            self.packet_table.see(iid)
+            self._render_packet_table([]): D:\Shaneen\gui\main_window.py:2012:            self._render_packet_table([])
+                self._render_packet_table(records): D:\Shaneen\gui\main_window.py:2263:                self._render_packet_table(records)
+                self._update_table_empty_state(): D:\Shaneen\gui\main_window.py:2325:                self._update_table_empty_state()
+            self._render_packet_table(: D:\Shaneen\gui\main_window.py:2370:            self._render_packet_table(
