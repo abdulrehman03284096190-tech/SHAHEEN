@@ -2,9 +2,11 @@ import json
 
 import pytest
 
+import config.settings as settings_module
 from config.settings import (
     AppSettings,
     load_persisted_settings,
+    load_settings,
     save_persisted_settings,
     validate_editable_settings,
 )
@@ -75,3 +77,29 @@ def test_editable_settings_validation(field, value):
     settings[field] = value
     with pytest.raises(ValueError):
         validate_editable_settings(**settings)
+
+
+def test_frozen_settings_use_per_user_app_data_and_config_file(tmp_path, monkeypatch):
+    app_data = tmp_path / "Shaheen"
+    loaded_dotenv_paths = []
+    monkeypatch.setattr(settings_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        settings_module,
+        "load_dotenv",
+        lambda path=None: loaded_dotenv_paths.append(path),
+    )
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    for variable in ("DATABASE_PATH", "CAPTURE_PATH", "REPORT_PATH", "LOG_PATH"):
+        monkeypatch.delenv(variable, raising=False)
+
+    settings = load_settings()
+
+    assert settings.database_path == str(app_data / "data" / "shaheen.db")
+    assert settings.capture_path == str(app_data / "captures")
+    assert settings.report_path == str(app_data / "reports_output")
+    assert settings.log_path == str(app_data / "logs" / "shaheen.log")
+    assert loaded_dotenv_paths == [app_data / "config" / ".env"]
+    assert all(
+        (app_data / directory).is_dir()
+        for directory in ("config", "captures", "reports_output", "logs", "data", "backups")
+    )

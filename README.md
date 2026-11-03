@@ -72,22 +72,17 @@ python main.py
 ## Windows distribution
 
 Source runs keep the database, captures, reports, and logs under the project
-directory by default. A frozen PyInstaller build stores these writable files
-under `%LOCALAPPDATA%\Shaheen` (or `%APPDATA%\Shaheen` if LocalAppData is not
-defined); each path can still be overridden with the corresponding environment
-variable.
+directory by default. A frozen PyInstaller build stores writable data under
+`%LOCALAPPDATA%\Shaheen` (or `%APPDATA%\Shaheen` if LocalAppData is not
+defined), including a per-user configuration directory; each data path can
+still be overridden with its corresponding environment variable.
 
-No PyInstaller spec or installer definition is currently maintained. From the
-project directory, the current one-folder executable build command is:
-
-```powershell
-python -m PyInstaller --noconfirm --clean --windowed --name Shaheen --collect-data customtkinter --collect-all scapy main.py
-```
-
-The executable is written under `dist\Shaheen\Shaheen.exe`. This build command
-has not been validated as a release artifact, and the project has no installer
-build command. Smoke-test the executable from outside the source directory
-before distribution.
+The 64-bit Windows release specification, Inno Setup installer, build steps,
+and installation/data-preservation guidance are maintained in
+[`SHAHEEN_RELEASE`](./SHAHEEN_RELEASE/README_INSTALLATION.md). Build the
+standalone application with `SHAHEEN_RELEASE\SHAHEEN.spec` and compile the
+installer with the included `SHAHEEN_Setup.iss`. Live Windows capture requires
+separately installed Npcap; it is not redistributed with SHAHEEN.
 
 ## Testing
 

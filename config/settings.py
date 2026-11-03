@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import os
-import sys
-from dataclasses import dataclass
 import json
 import logging
-from pathlib import Path
+import os
 import sqlite3
+import sys
+from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -47,22 +47,24 @@ def validate_editable_settings(
     capture_filter: str,
     report_path: str,
 ) -> dict[str, str]:
-    if theme not in {"dark", "light", "system"}:
+    normalized_theme = str(theme).strip().lower()
+    if normalized_theme not in {"dark", "light", "system"}:
         raise ValueError("Theme must be dark, light, or system.")
+    normalized_filter = str(capture_filter).strip() if capture_filter is not None else ""
     if (
         not isinstance(capture_filter, str)
-        or len(capture_filter) > 2048
-        or any(character in capture_filter for character in "\x00\r\n")
+        or len(normalized_filter) > 2048
+        or any(character in normalized_filter for character in "\x00\r\n")
     ):
         raise ValueError("Capture filter must be a single line of at most 2048 characters.")
-    if not isinstance(report_path, str) or not report_path.strip():
+    if report_path is None or not str(report_path).strip():
         raise ValueError("Report directory must be a non-empty path.")
-    target = Path(report_path.strip()).expanduser()
+    target = Path(str(report_path).strip()).expanduser()
     if not target.is_absolute():
         target = Path.home() / target
     return {
-        "theme": theme,
-        "capture_filter": capture_filter.strip(),
+        "theme": normalized_theme,
+        "capture_filter": normalized_filter,
         "report_path": str(target),
     }
 
@@ -117,7 +119,6 @@ def save_persisted_settings(
 
 
 def load_settings() -> AppSettings:
-    load_dotenv()
     frozen = getattr(sys, "frozen", False)
     if frozen:
         local_app_data = os.getenv("LOCALAPPDATA") or os.getenv("APPDATA")
@@ -128,6 +129,17 @@ def load_settings() -> AppSettings:
         )
     else:
         base = Path(__file__).resolve().parents[1]
+    if frozen:
+        config_path = base / "config"
+        config_path.mkdir(parents=True, exist_ok=True)
+        load_dotenv(config_path / ".env")
+    else:
+        load_dotenv()
+    snap_length_raw = os.getenv("SNAP_LENGTH", str(DEFAULT_SNAP_LENGTH))
+    try:
+        snap_length = int(snap_length_raw)
+    except (TypeError, ValueError):
+        snap_length = DEFAULT_SNAP_LENGTH
     settings = AppSettings(
         app_name=os.getenv("APP_NAME", "Shaheen"),
         theme=os.getenv("APP_THEME", DEFAULT_THEME),
@@ -152,7 +164,7 @@ def load_settings() -> AppSettings:
         ai_provider=os.getenv("AI_PROVIDER", DEFAULT_AI_PROVIDER),
         ai_model=os.getenv("AI_MODEL", DEFAULT_AI_MODEL),
         capture_filter=os.getenv("CAPTURE_FILTER", DEFAULT_FILTER),
-        snap_length=int(os.getenv("SNAP_LENGTH", DEFAULT_SNAP_LENGTH)),
+        snap_length=snap_length,
         enable_ai=os.getenv("ENABLE_AI", "false").lower() in {"1", "true", "yes"},
     )
     validate_editable_settings(
@@ -164,4 +176,6 @@ def load_settings() -> AppSettings:
     Path(settings.capture_path).mkdir(parents=True, exist_ok=True)
     Path(settings.report_path).mkdir(parents=True, exist_ok=True)
     Path(settings.log_path).parent.mkdir(parents=True, exist_ok=True)
+    if frozen:
+        (base / "backups").mkdir(parents=True, exist_ok=True)
     return settings

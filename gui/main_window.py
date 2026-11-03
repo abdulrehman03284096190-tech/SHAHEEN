@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import math
 import queue
+import shutil
 import sqlite3
 import threading
 import time
+import tkinter as tk
+from collections import Counter, deque
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -18,6 +23,7 @@ except Exception:  # pragma: no cover
     ctk = _DummyCTk()
 
 from analyzer.filter_engine import FilterError, compile_filter_sql, evaluate_filter
+from analyzer.nmap_xml import NmapHost, parse_nmap_xml
 from analyzer.packet_parser import PacketRecord
 from capture.capture_manager import CaptureManager
 from capture.interface_manager import CaptureInterface, InterfaceDiscoveryError
@@ -36,11 +42,14 @@ from database.packet_repository import (
     packet_record_from_row,
 )
 from detection.detection_engine import DetectionEngine
+from gui.components.sidebar import NavigationItem, Sidebar
+from gui.styles import apply_enterprise_control_styles
+from gui.theme import PALETTE, configure_ttk_theme
 from investigations.case_manager import InvestigationManager
 from reports.csv_export import CSVExporter
 from reports.pdf_report import PDFReport
-from gui.theme import PALETTE
-from gui.icons import svg_data
+
+MAX_DASHBOARD_GRAPH_HOSTS = 12
 
 
 class _AutoScrollbar(ttk.Scrollbar):
@@ -86,9 +95,24 @@ class ShaheenMainWindow(ctk.CTk):
         self._display_paused_packets = 0
         self._live_capture_active = False
         self._live_session_id: int | None = None
+        self._live_capture_started_at: float | None = None
+        self._live_capture_stopped_at: float | None = None
+        self._last_live_alert_refresh = 0.0
+        self._last_live_capture_session_id: int | None = None
+        self._live_bytes_captured = 0
+        self._live_protocol_counts: Counter[str] = Counter()
+        self._live_traffic_samples: deque[tuple[str, float, float]] = deque(maxlen=60)
+        self._live_traffic_last_sample_at: float | None = None
+        self._live_traffic_last_packets = 0
+        self._live_traffic_last_bytes = 0
+        self._live_traffic_final_sampled = False
+        self._render_live_traffic_graph()
         self._packet_storage_worker: PacketStorageWorker | None = None
         self._packets_persisted = 0
         self._metadata_packets_dropped = 0
+        self._nmap_hosts: dict[str, NmapHost] = {}
+        self._dashboard_network_edges: list[tuple[str, str, int]] = []
+        self._dashboard_traffic_hosts: list[tuple[str, int]] = []
 
         self.title(f"{self.app.settings.app_name} — Network Traffic Analysis")
         screen_width = self.winfo_screenwidth()
@@ -99,120 +123,90 @@ class ShaheenMainWindow(ctk.CTk):
         self.minsize(min(980, initial_width), min(580, initial_height))
         self.configure(fg_color=PALETTE["bg_app"])
         self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(0, minsize=272)
         self.grid_rowconfigure(0, weight=1)
 
-        self.sidebar = ctk.CTkFrame(self, width=260, corner_radius=0, fg_color=PALETTE["bg_sidebar"])
-        self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_propagate(False)
-        self.sidebar.grid_columnconfigure(0, weight=1)
-        self.sidebar.grid_rowconfigure(10, weight=1)
-
-        title_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        title_frame.grid(row=0, column=0, sticky="ew", padx=18, pady=(24, 16))
-        ctk.CTkLabel(
-            title_frame,
-            text="SHAHEEN",
-            font=ctk.CTkFont(size=24, weight="bold"),
-            text_color=PALETTE["text_primary"],
-        ).pack(anchor="w")
-        ctk.CTkLabel(
-            title_frame,
-            text="NETWORK TRAFFIC ANALYSIS",
-            font=ctk.CTkFont(size=9, weight="bold"),
-            text_color=PALETTE["text_label"],
-        ).pack(anchor="w", pady=(4, 0))
-        divider = ctk.CTkFrame(self.sidebar, height=1, fg_color=PALETTE["border"])
-        divider.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 16))
-
-        self._nav_buttons = {}
-        self._current_nav = "Packet Analyzer"
-        nav_items = (
-            ("Dashboard", "dashboard"),
-            ("Live Capture", "live"),
-            ("Packet Analyzer", "analyzer"),
-            ("Alerts", "alerts"),
-            ("Reports", "reports"),
-            ("Settings", "settings"),
+        self.sidebar = Sidebar(
+            self,
+            version="v1.0.0",
+            product_name="Network Analysis System",
         )
-        for row, (label, icon_name) in enumerate(nav_items, start=2):
-            btn = ctk.CTkButton(
-                self.sidebar,
-                text="   " + label,
-                anchor="w",
-                height=42,
-                corner_radius=8,
-                fg_color="transparent",
-                hover_color=PALETTE["nav_hover"],
-                text_color=PALETTE["text_label"],
-                font=ctk.CTkFont(size=12),
-                command=lambda name=label: self._select_navigation(name),
-                compound="left",
-            )
-            try:
-                from PIL import Image
-                import io, base64
-                data = svg_data(icon_name)
-                if data:
-                    img_data = base64.b64decode(data.split(",", 1)[1]) if "," in data else None
-                    if img_data:
-                        img = Image.open(io.BytesIO(img_data))
-                        ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(18, 18))
-                        btn.configure(image=ctk_img)
-            except Exception:
-                pass
-            btn.grid(row=row, column=0, padx=12, pady=3, sticky="ew")
-            self._nav_buttons[label] = btn
+        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self._nav_buttons: dict[str, NavigationItem] = {}
         self._current_nav = "Packet Analyzer"
-        try:
-            self._update_nav_active_state(self._current_nav)
-        except Exception:
-            pass
-        sidebar_footer = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        sidebar_footer.grid(row=10, column=0, sticky="ew", padx=18, pady=(16, 20))
-        ctk.CTkLabel(
-            sidebar_footer,
-            text="v1.0.0",
-            justify="left",
-            text_color=PALETTE["text_label"],
-            font=ctk.CTkFont(size=10),
-        ).pack(anchor="w")
-        ctk.CTkLabel(
-            sidebar_footer,
-            text="Network Analysis System",
-            justify="left",
-            text_color=PALETTE["text_label"],
-            font=ctk.CTkFont(size=10),
-        ).pack(anchor="w", pady=(2, 0))
+        main_navigation = self.sidebar.add_section("MAIN MENU")
+        for route, label, icon in (
+            ("Dashboard", "Dashboard", "dashboard"),
+            ("Live Capture", "Live Capture", "live"),
+            ("Packet Analyzer", "Packet Analyzer", "network"),
+        ):
+            self._nav_buttons[route] = main_navigation.add_item(
+                route=route,
+                label=label,
+                icon=icon,
+                command=lambda name=route: self._select_navigation(name),
+            )
+
+        security_navigation = self.sidebar.add_section("SECURITY OPERATIONS")
+        for route, label, icon in (
+            ("Alerts", "Alerts & Threats", "alerts"),
+            ("Reports", "Reports", "reports"),
+        ):
+            self._nav_buttons[route] = security_navigation.add_item(
+                route=route,
+                label=label,
+                icon=icon,
+                command=lambda name=route: self._select_navigation(name),
+            )
+
+        system_navigation = self.sidebar.add_section("SYSTEM")
+        self._nav_buttons["Settings"] = system_navigation.add_item(
+            route="Settings",
+            label="Settings",
+            icon="settings",
+            command=lambda: self._select_navigation("Settings"),
+        )
+        self.sidebar.fit_navigation()
+        self._update_nav_active_state(self._current_nav)
 
         self.content = ctk.CTkFrame(self, corner_radius=0, fg_color=PALETTE["bg_content"])
         self.content.grid(row=0, column=1, sticky="nsew", padx=(8, 12), pady=(10, 4))
         self.content.grid_columnconfigure(0, weight=1)
         self.content.grid_rowconfigure(3, weight=1)
 
-        header_frame = ctk.CTkFrame(self.content, fg_color=PALETTE["bg_header"] if "bg_header" in PALETTE else "#111827")
+        header_frame = ctk.CTkFrame(
+            self.content,
+            fg_color=PALETTE["bg_header"],
+            corner_radius=10,
+            border_width=1,
+            border_color=PALETTE["border"],
+        )
         header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=(0, 8))
         header_frame.grid_columnconfigure(0, weight=1)
         self.header = ctk.CTkLabel(
             header_frame,
             text="Packet Analyzer",
-            font=ctk.CTkFont(size=28, weight="bold"),
+            font=ctk.CTkFont(family="Segoe UI", size=24, weight="bold"),
             text_color=PALETTE["text_primary"],
             anchor="w",
         )
-        self.header.grid(row=0, column=0, sticky="w", padx=24, pady=(18, 18))
+        self.header.grid(row=0, column=0, sticky="w", padx=22, pady=(15, 15))
         self.header_state = ctk.CTkLabel(
             header_frame,
             text="Capture idle",
             text_color=PALETTE["text_label"],
-            font=ctk.CTkFont(size=12),
+            fg_color=PALETTE["bg_card_alt"],
+            corner_radius=8,
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
         )
-        self.header_state.grid(row=0, column=1, padx=(12, 24), pady=(18, 18), sticky="e")
+        self.header_state.grid(row=0, column=1, padx=(12, 20), pady=(12, 12), sticky="e")
 
         self.toolbar = ctk.CTkFrame(
             self.content,
             fg_color=PALETTE["bg_panel"],
             border_width=1,
             border_color=PALETTE["border"],
+            corner_radius=10,
         )
         self.toolbar.grid(row=1, column=0, sticky="ew", padx=8, pady=(2, 8))
         self.toolbar.grid_columnconfigure(0, weight=1)
@@ -406,44 +400,32 @@ class ShaheenMainWindow(ctk.CTk):
         self.page_size_menu.set("200")
         self.page_size_menu.grid(row=0, column=4, padx=4, pady=4)
 
+        self._packet_analyzer_controls = {
+            "interface_menu": self.interface_menu,
+            "refresh_interfaces_button": self.refresh_interfaces_button,
+            "start_capture_button": self.start_capture_button,
+            "stop_capture_button": self.stop_capture_button,
+            "pause_display_button": self.pause_display_button,
+            "import_button": self.import_button,
+            "cancel_import_button": self.cancel_import_button,
+            "start_recording_button": self.start_recording_button,
+            "stop_recording_button": self.stop_recording_button,
+            "filter_entry": self.filter_entry,
+            "apply_filter_button": self.apply_filter_button,
+            "clear_filter_button": self.clear_filter_button,
+        }
+
         self.packet_label = ctk.CTkLabel(
             self.content,
             text="No capture loaded.",
             anchor="w",
+            fg_color=PALETTE["bg_card"],
+            corner_radius=7,
             text_color=PALETTE["text_secondary"],
         )
-        self.packet_label.grid(row=2, column=0, padx=10, pady=(0, 4), sticky="ew")
+        self.packet_label.grid(row=2, column=0, padx=8, pady=(0, 6), sticky="ew")
 
-        style = ttk.Style(self)
-        style.theme_use("clam")
-        style.configure(
-            "Shaheen.Treeview",
-            background=PALETTE["bg_table"],
-            fieldbackground=PALETTE["bg_table"],
-            foreground="#E2E8F0",
-            rowheight=29,
-            font=("Segoe UI", 10),
-            borderwidth=0,
-            bordercolor="#26364D",
-            lightcolor="#0F172A",
-        )
-        style.configure(
-            "Shaheen.Treeview.Heading",
-            background="#1E293B",
-            foreground="#F8FAFC",
-            font=("Segoe UI", 10, "bold"),
-            relief="flat",
-        )
-        style.map(
-            "Shaheen.Treeview",
-            background=[("selected", "#1D4ED8")],
-            foreground=[("selected", "#FFFFFF")],
-        )
-        style.map(
-            "Shaheen.Treeview.Heading",
-            background=[("active", "#334155")],
-        )
-        style.configure("Shaheen.TPanedwindow", background="#0B1220")
+        configure_ttk_theme(self)
 
         self.workspace = ttk.Panedwindow(
             self.content,
@@ -455,7 +437,9 @@ class ShaheenMainWindow(ctk.CTk):
         self.packet_table_container = ctk.CTkFrame(
             self.workspace,
             fg_color=PALETTE["bg_panel"],
-            corner_radius=6,
+            corner_radius=10,
+            border_width=1,
+            border_color=PALETTE["border"],
         )
         self.packet_table_container.grid_rowconfigure(0, weight=1)
         self.packet_table_container.grid_columnconfigure(0, weight=1)
@@ -514,7 +498,13 @@ class ShaheenMainWindow(ctk.CTk):
         self._packet_by_iid: dict[str, PacketRecord] = {}
         self.packet_table.bind("<<TreeviewSelect>>", self._on_packet_table_select)
 
-        details_frame = ctk.CTkFrame(self.workspace, fg_color=PALETTE["bg_panel"], corner_radius=6)
+        details_frame = ctk.CTkFrame(
+            self.workspace,
+            fg_color=PALETTE["bg_panel"],
+            corner_radius=10,
+            border_width=1,
+            border_color=PALETTE["border"],
+        )
         details_frame.grid_rowconfigure(1, weight=1)
         details_frame.grid_columnconfigure(0, weight=1)
         self.details_label = ctk.CTkLabel(
@@ -524,7 +514,7 @@ class ShaheenMainWindow(ctk.CTk):
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color="#E2E8F0",
         )
-        self.details_label.grid(row=0, column=0, padx=10, pady=(7, 2), sticky="ew")
+        self.details_label.grid(row=0, column=0, padx=10, pady=(7, 2), sticky="w")
         self.packet_details = ctk.CTkTextbox(
             details_frame,
             wrap="none",
@@ -534,7 +524,13 @@ class ShaheenMainWindow(ctk.CTk):
         )
         self.packet_details.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="nsew")
 
-        hex_frame = ctk.CTkFrame(self.workspace, fg_color=PALETTE["bg_panel"], corner_radius=6)
+        hex_frame = ctk.CTkFrame(
+            self.workspace,
+            fg_color=PALETTE["bg_panel"],
+            corner_radius=10,
+            border_width=1,
+            border_color=PALETTE["border"],
+        )
         hex_frame.grid_rowconfigure(1, weight=1)
         hex_frame.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
@@ -552,6 +548,10 @@ class ShaheenMainWindow(ctk.CTk):
             text_color=PALETTE["text_secondary"],
         )
         self.packet_hex.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="nsew")
+        self._packet_analyzer_detail_widgets = {
+            "packet_details": self.packet_details,
+            "packet_hex": self.packet_hex,
+        }
         self.packet_details.insert("end", "Select a packet to inspect decoded fields.")
         self.packet_hex.insert("end", "Select a packet to inspect its captured bytes.")
         self.workspace.add(self.packet_table_container, weight=5)
@@ -563,6 +563,7 @@ class ShaheenMainWindow(ctk.CTk):
             fg_color=PALETTE["bg_panel"],
             border_width=1,
             border_color=PALETTE["border"],
+            corner_radius=10,
         )
         self.investigation_bar.grid(row=4, column=0, padx=8, pady=(0, 6), sticky="ew")
         self.investigation_bar.grid_columnconfigure(0, weight=1)
@@ -618,7 +619,12 @@ class ShaheenMainWindow(ctk.CTk):
         )
         self.investigation_label.grid(row=2, column=0, columnspan=5, padx=8, pady=(0, 5), sticky="w")
 
-        self.status_frame = ctk.CTkFrame(self, fg_color="#080E1D", corner_radius=0, height=28)
+        self.status_frame = ctk.CTkFrame(
+            self,
+            fg_color=PALETTE["bg_sidebar"],
+            corner_radius=0,
+            height=30,
+        )
         self.status_frame.grid(row=1, column=0, columnspan=2, sticky="ew")
         self.status_frame.grid_propagate(False)
         self.status_frame.grid_columnconfigure(0, weight=1)
@@ -644,6 +650,7 @@ class ShaheenMainWindow(ctk.CTk):
         self.after(150, self._initialize_workspace_sashes)
 
         self._build_navigation_workspaces()
+        apply_enterprise_control_styles(self)
         self.after(200, self._poll_capture_queue)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._refresh_interfaces()
@@ -657,6 +664,8 @@ class ShaheenMainWindow(ctk.CTk):
         elif name == "Live Capture":
             self._show_navigation_page(name)
             self.interface_menu.focus_set()
+            self._refresh_live_packet_stream()
+            self._refresh_live_capture_metrics()
             try:
                 values = self.interface_menu.cget("values")
                 if not values or len(values) <= 1:
@@ -688,18 +697,7 @@ class ShaheenMainWindow(ctk.CTk):
         if not hasattr(self, "_nav_buttons"):
             return
         for name, btn in self._nav_buttons.items():
-            if name == active_name:
-                btn.configure(
-                    fg_color=PALETTE["primary"],
-                    hover_color=PALETTE["primary_hover"] if "primary_hover" in PALETTE else "#2563EB",
-                    text_color=PALETTE["text_primary"],
-                )
-            else:
-                btn.configure(
-                    fg_color="transparent",
-                    hover_color=PALETTE["nav_hover"] if "nav_hover" in PALETTE else "#1E293B",
-                    text_color=PALETTE["text_label"],
-                )
+            btn.set_active(name == active_name)
         self._current_nav = active_name
 
     def _build_navigation_workspaces(self) -> None:
@@ -713,7 +711,13 @@ class ShaheenMainWindow(ctk.CTk):
         self._alert_rows: dict[int, sqlite3.Row] = {}
 
         def page(name: str) -> ctk.CTkFrame:
-            frame = ctk.CTkFrame(self.content, fg_color=PALETTE["bg_panel"])
+            frame = ctk.CTkFrame(
+                self.content,
+                fg_color=PALETTE["bg_panel"],
+                corner_radius=12,
+                border_width=1,
+                border_color=PALETTE["border"],
+            )
             frame.grid(row=3, column=0, sticky="nsew", padx=8, pady=(0, 8))
             frame.grid_remove()
             self._navigation_pages[name] = frame
@@ -730,9 +734,9 @@ class ShaheenMainWindow(ctk.CTk):
         title_box.grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(
             title_box,
-            text="Dashboard",
+            text="Network overview",
             text_color=PALETTE["text_primary"],
-            font=ctk.CTkFont(size=30, weight="bold"),
+            font=ctk.CTkFont(size=26, weight="bold"),
             anchor="w",
         ).pack(anchor="w")
         ctk.CTkLabel(
@@ -809,48 +813,134 @@ class ShaheenMainWindow(ctk.CTk):
         traffic_card = ctk.CTkFrame(dashboard, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         traffic_card.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=(24, 8), pady=(0, 12))
         traffic_card.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(traffic_card, text="NETWORK TRAFFIC OVERVIEW", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=13, weight="bold"), anchor="w").grid(row=0, column=0, sticky="w", padx=18, pady=(14, 4))
-        ctk.CTkLabel(traffic_card, text="Real-time packet volume", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=10), anchor="w").grid(row=1, column=0, sticky="w", padx=18)
-        self.dashboard_traffic_text = ctk.CTkLabel(traffic_card, text="No network traffic data available. Start a capture or import a PCAP file.", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=11), anchor="w")
-        self.dashboard_traffic_text.grid(row=2, column=0, sticky="ew", padx=18, pady=(18, 18))
+        traffic_card.grid_rowconfigure(2, weight=1)
+        ctk.CTkLabel(
+            traffic_card,
+            text="NETWORK TOPOLOGY",
+            text_color=PALETTE["text_primary"],
+            font=ctk.CTkFont(size=13, weight="bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=18, pady=(14, 4))
+        ctk.CTkButton(
+            traffic_card,
+            text="Import Nmap XML",
+            command=self._import_nmap_results,
+            height=27,
+            width=130,
+            fg_color=PALETTE["bg_card_alt"],
+            hover_color=PALETTE["nav_hover"],
+        ).grid(row=0, column=1, sticky="e", padx=16, pady=(10, 0))
+        ctk.CTkLabel(
+            traffic_card,
+            text="Observed packet flows and hosts discovered in an Nmap XML export",
+            text_color=PALETTE["text_label"],
+            font=ctk.CTkFont(size=10),
+            anchor="w",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", padx=18)
+        self.dashboard_network_canvas = tk.Canvas(
+            traffic_card,
+            height=150,
+            background=PALETTE["bg_card"],
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.dashboard_network_canvas.grid(
+            row=2, column=0, columnspan=2, sticky="nsew", padx=10, pady=(4, 0),
+        )
+        self.dashboard_network_canvas.bind(
+            "<Configure>",
+            lambda _event: self._render_dashboard_network_graph(),
+        )
+        self.dashboard_graph_status = ctk.CTkLabel(
+            traffic_card,
+            text="Import an Nmap XML scan, or view hosts and flows from captured traffic.",
+            text_color=PALETTE["text_muted"],
+            font=ctk.CTkFont(size=9),
+            anchor="w",
+        )
+        self.dashboard_graph_status.grid(
+            row=3, column=0, columnspan=2, sticky="ew", padx=18, pady=(0, 10),
+        )
 
         # Protocol distribution
         proto_card = ctk.CTkFrame(dashboard, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         proto_card.grid(row=2, column=2, sticky="nsew", padx=(8, 24), pady=(0, 12))
         proto_card.grid_columnconfigure(0, weight=1)
+        proto_card.grid_rowconfigure(1, weight=1)
         ctk.CTkLabel(proto_card, text="PROTOCOL DISTRIBUTION", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=13, weight="bold"), anchor="w").grid(row=0, column=0, sticky="w", padx=18, pady=(14, 4))
-        self.dashboard_protocol_text = ctk.CTkLabel(proto_card, text="No protocol data available.", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=11), anchor="nw", justify="left")
-        self.dashboard_protocol_text.grid(row=1, column=0, sticky="ew", padx=18, pady=(12, 18))
+        self.dashboard_protocol_canvas = tk.Canvas(
+            proto_card,
+            height=150,
+            background=PALETTE["bg_card"],
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.dashboard_protocol_canvas.grid(
+            row=1, column=0, sticky="nsew", padx=12, pady=(2, 10),
+        )
+        self.dashboard_protocol_canvas.bind(
+            "<Configure>",
+            lambda _event: self._render_dashboard_protocol_chart(),
+        )
+        self._dashboard_protocol_data: list[tuple[str, int]] = []
 
         # Top IPs
         top_src_card = ctk.CTkFrame(dashboard, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         top_src_card.grid(row=3, column=0, sticky="nsew", padx=(24, 8), pady=(0, 12))
         top_src_card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(top_src_card, text="TOP SOURCE IP ADDRESSES", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=12, weight="bold"), anchor="w").grid(row=0, column=0, sticky="w", padx=16, pady=(12, 6))
-        self.dashboard_top_src = ctk.CTkLabel(top_src_card, text="No data", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=10), anchor="nw", justify="left")
+        self.dashboard_top_src = ctk.CTkLabel(top_src_card, text="No data", text_color=PALETTE["text_secondary"], font=("Consolas", 10), anchor="nw", justify="left")
         self.dashboard_top_src.grid(row=1, column=0, sticky="ew", padx=16, pady=(4, 12))
 
         top_dst_card = ctk.CTkFrame(dashboard, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         top_dst_card.grid(row=3, column=1, sticky="nsew", padx=(8, 8), pady=(0, 12))
         top_dst_card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(top_dst_card, text="TOP DESTINATION IP ADDRESSES", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=12, weight="bold"), anchor="w").grid(row=0, column=0, sticky="w", padx=16, pady=(12, 6))
-        self.dashboard_top_dst = ctk.CTkLabel(top_dst_card, text="No data", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=10), anchor="nw", justify="left")
+        self.dashboard_top_dst = ctk.CTkLabel(top_dst_card, text="No data", text_color=PALETTE["text_secondary"], font=("Consolas", 10), anchor="nw", justify="left")
         self.dashboard_top_dst.grid(row=1, column=0, sticky="ew", padx=16, pady=(4, 12))
 
         alerts_card = ctk.CTkFrame(dashboard, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         alerts_card.grid(row=3, column=2, sticky="nsew", padx=(8, 24), pady=(0, 12))
         alerts_card.grid_columnconfigure(0, weight=1)
+        alerts_card.grid_rowconfigure(1, weight=1)
         ctk.CTkLabel(alerts_card, text="SECURITY ALERTS", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=12, weight="bold"), anchor="w").grid(row=0, column=0, sticky="w", padx=16, pady=(12, 6))
-        self.dashboard_alerts_overview = ctk.CTkLabel(alerts_card, text="No security alerts.", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=10), anchor="nw", justify="left")
-        self.dashboard_alerts_overview.grid(row=1, column=0, sticky="ew", padx=16, pady=(4, 12))
+        self.dashboard_alerts_canvas = tk.Canvas(
+            alerts_card,
+            height=100,
+            background=PALETTE["bg_card"],
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.dashboard_alerts_canvas.grid(
+            row=1, column=0, sticky="nsew", padx=12, pady=(0, 10),
+        )
+        self.dashboard_alerts_canvas.bind(
+            "<Configure>",
+            lambda _event: self._render_dashboard_alert_chart(),
+        )
+        self._dashboard_alert_data: list[tuple[str, int]] = []
 
         # Recent activity and system health
         recent_card = ctk.CTkFrame(dashboard, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         recent_card.grid(row=4, column=0, columnspan=2, sticky="nsew", padx=(24, 8), pady=(0, 16))
         recent_card.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(recent_card, text="RECENT NETWORK ACTIVITY", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=12, weight="bold"), anchor="w").grid(row=0, column=0, sticky="w", padx=16, pady=(12, 6))
-        self.dashboard_recent = ctk.CTkLabel(recent_card, text="No recent activity.", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=10), anchor="nw", justify="left")
-        self.dashboard_recent.grid(row=1, column=0, sticky="ew", padx=16, pady=(4, 12))
+        recent_card.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(recent_card, text="PACKET VOLUME OVER TIME", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=12, weight="bold"), anchor="w").grid(row=0, column=0, sticky="w", padx=16, pady=(12, 4))
+        self.dashboard_timeline_canvas = tk.Canvas(
+            recent_card,
+            height=120,
+            background=PALETTE["bg_card"],
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.dashboard_timeline_canvas.grid(
+            row=1, column=0, sticky="nsew", padx=10, pady=(0, 8),
+        )
+        self.dashboard_timeline_canvas.bind(
+            "<Configure>",
+            lambda _event: self._render_dashboard_timeline(),
+        )
+        self._dashboard_timeline_data: list[tuple[str, int]] = []
 
         health_card = ctk.CTkFrame(dashboard, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         health_card.grid(row=4, column=2, sticky="nsew", padx=(8, 24), pady=(0, 16))
@@ -867,7 +957,8 @@ class ShaheenMainWindow(ctk.CTk):
 
         live_capture = page("Live Capture")
         live_capture.grid_columnconfigure((0, 1, 2), weight=1)
-        live_capture.grid_rowconfigure(8, weight=1)
+        live_capture.grid_rowconfigure(4, weight=2)
+        live_capture.grid_rowconfigure(5, weight=1)
 
         # Header
         lc_header = ctk.CTkFrame(live_capture, fg_color="transparent")
@@ -894,47 +985,141 @@ class ShaheenMainWindow(ctk.CTk):
         grp_a.grid(row=0, column=0, sticky="nsew", padx=14, pady=12)
         ctk.CTkLabel(grp_a, text="NETWORK INTERFACE", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=11, weight="bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
         ctk.CTkLabel(grp_a, text="Interface", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=10)).grid(row=1, column=0, sticky="w")
-        # reuse existing interface menu if exists
-        if not hasattr(self, 'interface_menu'):
-            self.interface_menu = ctk.CTkOptionMenu(grp_a, values=["Select interface"])
-        self.interface_menu.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(2, 6))
-        if not hasattr(self, 'refresh_interfaces_button'):
-            self.refresh_interfaces_button = ctk.CTkButton(grp_a, text="Refresh", height=28)
-        self.refresh_interfaces_button.grid(row=3, column=0, sticky="w")
-        ctk.CTkButton(grp_a, text="Start Capture", command=self._start_live_capture, height=28, fg_color=PALETTE["success"], hover_color="#16A34A").grid(row=4, column=0, sticky="ew", pady=(10, 4))
-        ctk.CTkButton(grp_a, text="Stop Capture", command=self._stop_live_capture, height=28, fg_color=PALETTE["danger"], hover_color=PALETTE["danger_hover"]).grid(row=5, column=0, sticky="ew", pady=4)
-        ctk.CTkButton(grp_a, text="Pause Display", command=self._toggle_display_pause, height=28).grid(row=6, column=0, sticky="ew", pady=4)
+        grp_a.grid_columnconfigure(0, weight=1)
+        self.live_interface_menu = ctk.CTkOptionMenu(
+            grp_a,
+            values=["Select interface"],
+            command=self._select_interface,
+            height=32,
+        )
+        self.live_interface_menu.set("Select interface")
+        self.live_interface_menu.grid(row=2, column=0, sticky="ew", pady=(2, 6))
+        self.live_refresh_interfaces_button = ctk.CTkButton(
+            grp_a,
+            text="Refresh",
+            height=28,
+            command=self._refresh_interfaces,
+            fg_color=PALETTE["bg_card_alt"],
+            hover_color=PALETTE["nav_hover"],
+        )
+        self.live_refresh_interfaces_button.grid(row=3, column=0, sticky="w")
+        self.live_start_capture_button = ctk.CTkButton(
+            grp_a,
+            text="Start capture",
+            command=self._start_live_capture,
+            height=30,
+            fg_color=PALETTE["success"],
+            hover_color=PALETTE["success_hover"],
+        )
+        self.live_start_capture_button.grid(row=4, column=0, sticky="ew", pady=(10, 4))
+        self.live_stop_capture_button = ctk.CTkButton(
+            grp_a,
+            text="Stop capture",
+            command=self._stop_live_capture,
+            height=30,
+            fg_color=PALETTE["danger"],
+            hover_color=PALETTE["danger_hover"],
+        )
+        self.live_stop_capture_button.grid(row=5, column=0, sticky="ew", pady=4)
+        self.live_pause_display_button = ctk.CTkButton(
+            grp_a,
+            text="Pause display",
+            command=self._toggle_display_pause,
+            height=30,
+            fg_color=PALETTE["bg_card_alt"],
+            hover_color=PALETTE["nav_hover"],
+        )
+        self.live_pause_display_button.grid(row=6, column=0, sticky="ew", pady=4)
 
         grp_b = ctk.CTkFrame(ctrl_panel, fg_color="transparent")
         grp_b.grid(row=0, column=1, sticky="nsew", padx=14, pady=12)
         ctk.CTkLabel(grp_b, text="FILE IMPORT & RECORDING", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=11, weight="bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        if not hasattr(self, 'import_button'):
-            self.import_button = ctk.CTkButton(grp_b, text="Import PCAP/PCAPNG", command=self._import_file, height=28)
-        self.import_button.grid(row=1, column=0, sticky="ew", pady=4)
-        if not hasattr(self, 'cancel_import_button'):
-            self.cancel_import_button = ctk.CTkButton(grp_b, text="Cancel Import", height=28)
-        self.cancel_import_button.grid(row=2, column=0, sticky="ew", pady=4)
-        if not hasattr(self, 'start_recording_button'):
-            self.start_recording_button = ctk.CTkButton(grp_b, text="Start Recording", command=self._start_recording, height=28)
-        self.start_recording_button.grid(row=3, column=0, sticky="ew", pady=(10, 4))
-        if not hasattr(self, 'stop_recording_button'):
-            self.stop_recording_button = ctk.CTkButton(grp_b, text="Stop Recording", command=self._stop_recording, height=28)
-        self.stop_recording_button.grid(row=4, column=0, sticky="ew", pady=4)
+        grp_b.grid_columnconfigure(0, weight=1)
+        self.live_import_button = ctk.CTkButton(
+            grp_b,
+            text="Import capture",
+            command=self._import_file,
+            height=30,
+            fg_color=PALETTE["primary"],
+            hover_color=PALETTE["primary_hover"],
+        )
+        self.live_import_button.grid(row=1, column=0, sticky="ew", pady=4)
+        self.live_cancel_import_button = ctk.CTkButton(
+            grp_b,
+            text="Cancel import",
+            command=self._cancel_import,
+            height=30,
+            state="disabled",
+            fg_color=PALETTE["bg_card_alt"],
+            hover_color=PALETTE["nav_hover"],
+        )
+        self.live_cancel_import_button.grid(row=2, column=0, sticky="ew", pady=4)
+        self.live_start_recording_button = ctk.CTkButton(
+            grp_b,
+            text="Start recording",
+            command=self._start_recording,
+            height=30,
+            fg_color=PALETTE["primary"],
+            hover_color=PALETTE["primary_hover"],
+        )
+        self.live_start_recording_button.grid(row=3, column=0, sticky="ew", pady=(10, 4))
+        self.live_stop_recording_button = ctk.CTkButton(
+            grp_b,
+            text="Stop recording",
+            command=self._stop_recording,
+            height=30,
+            state="disabled",
+            fg_color=PALETTE["bg_card_alt"],
+            hover_color=PALETTE["nav_hover"],
+        )
+        self.live_stop_recording_button.grid(row=4, column=0, sticky="ew", pady=4)
         self.live_import_status = ctk.CTkLabel(grp_b, text="No import active", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=9))
         self.live_import_status.grid(row=5, column=0, sticky="w", pady=(8, 0))
 
         grp_c = ctk.CTkFrame(ctrl_panel, fg_color="transparent")
         grp_c.grid(row=0, column=2, sticky="nsew", padx=14, pady=12)
         ctk.CTkLabel(grp_c, text="DISPLAY FILTER", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=11, weight="bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        if not hasattr(self, 'filter_entry'):
-            self.filter_entry = ctk.CTkEntry(grp_c, placeholder_text="Example: tcp.port == 443 or dns")
-        self.filter_entry.grid(row=1, column=0, columnspan=2, sticky="ew", pady=4)
-        if not hasattr(self, 'apply_filter_button'):
-            self.apply_filter_button = ctk.CTkButton(grp_c, text="Apply Filter", command=self._apply_filter, height=28)
-        self.apply_filter_button.grid(row=2, column=0, sticky="ew", pady=4)
-        ctk.CTkButton(grp_c, text="Clear Filter", command=self._clear_filter, height=28).grid(row=3, column=0, sticky="ew", pady=4)
+        grp_c.grid_columnconfigure(0, weight=1)
+        self.live_filter_entry = ctk.CTkEntry(
+            grp_c,
+            placeholder_text="e.g. tcp.port == 443 or dns",
+            height=34,
+        )
+        self.live_filter_entry.grid(row=1, column=0, sticky="ew", pady=4)
+        self.live_apply_filter_button = ctk.CTkButton(
+            grp_c,
+            text="Apply filter",
+            command=self._apply_filter,
+            height=30,
+            fg_color=PALETTE["primary"],
+            hover_color=PALETTE["primary_hover"],
+        )
+        self.live_apply_filter_button.grid(row=2, column=0, sticky="ew", pady=4)
+        self.live_clear_filter_button = ctk.CTkButton(
+            grp_c,
+            text="Clear filter",
+            command=self._clear_filter,
+            height=30,
+            fg_color=PALETTE["bg_card_alt"],
+            hover_color=PALETTE["nav_hover"],
+        )
+        self.live_clear_filter_button.grid(row=3, column=0, sticky="ew", pady=4)
         self.live_filter_status = ctk.CTkLabel(grp_c, text="No active filter", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=9))
         self.live_filter_status.grid(row=4, column=0, sticky="w", pady=(8, 0))
+        self._live_capture_controls = {
+            "interface_menu": self.live_interface_menu,
+            "refresh_interfaces_button": self.live_refresh_interfaces_button,
+            "start_capture_button": self.live_start_capture_button,
+            "stop_capture_button": self.live_stop_capture_button,
+            "pause_display_button": self.live_pause_display_button,
+            "import_button": self.live_import_button,
+            "cancel_import_button": self.live_cancel_import_button,
+            "start_recording_button": self.live_start_recording_button,
+            "stop_recording_button": self.live_stop_recording_button,
+            "filter_entry": self.live_filter_entry,
+            "apply_filter_button": self.live_apply_filter_button,
+            "clear_filter_button": self.live_clear_filter_button,
+        }
 
         # KPI cards
         kpi_frame = ctk.CTkFrame(live_capture, fg_color="transparent")
@@ -962,8 +1147,32 @@ class ShaheenMainWindow(ctk.CTk):
         g1 = ctk.CTkFrame(graph_frame, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         g1.grid(row=0, column=0, sticky="nsew", padx=(0,8))
         ctk.CTkLabel(g1, text="LIVE TRAFFIC ANALYTICS", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=12, weight="bold")).grid(row=0, column=0, sticky="w", padx=16, pady=(12, 4))
-        self.live_traffic_graph = ctk.CTkLabel(g1, text="No capture active. Start capture to view live traffic.", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=11))
-        self.live_traffic_graph.grid(row=1, column=0, sticky="ew", padx=16, pady=(10, 16))
+        g1.grid_columnconfigure(0, weight=1)
+        g1.grid_rowconfigure(1, weight=1)
+        self.live_traffic_graph = tk.Canvas(
+            g1,
+            height=94,
+            background=PALETTE["bg_card"],
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.live_traffic_graph.grid(
+            row=1, column=0, sticky="nsew", padx=10, pady=(0, 0),
+        )
+        self.live_traffic_graph.bind(
+            "<Configure>",
+            lambda _event: self._render_live_traffic_graph(),
+        )
+        self.live_traffic_summary = ctk.CTkLabel(
+            g1,
+            text="Waiting for live capture data",
+            text_color=PALETTE["text_label"],
+            font=ctk.CTkFont(size=9),
+            anchor="w",
+        )
+        self.live_traffic_summary.grid(
+            row=2, column=0, sticky="ew", padx=16, pady=(0, 8),
+        )
         g2 = ctk.CTkFrame(graph_frame, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         g2.grid(row=0, column=1, sticky="nsew", padx=(8,0))
         ctk.CTkLabel(g2, text="PROTOCOL BREAKDOWN", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=12, weight="bold")).grid(row=0, column=0, sticky="w", padx=16, pady=(12, 4))
@@ -974,7 +1183,7 @@ class ShaheenMainWindow(ctk.CTk):
         pkt_frame = ctk.CTkFrame(live_capture, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         pkt_frame.grid(row=4, column=0, columnspan=3, sticky="nsew", padx=24, pady=(0, 12))
         pkt_frame.grid_columnconfigure(0, weight=1)
-        pkt_frame.grid_rowconfigure(2, weight=1)
+        pkt_frame.grid_rowconfigure(1, weight=1)
         pf_h = ctk.CTkFrame(pkt_frame, fg_color="transparent")
         pf_h.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 6))
         pf_h.grid_columnconfigure(0, weight=1)
@@ -983,21 +1192,37 @@ class ShaheenMainWindow(ctk.CTk):
         pkt_table_frame.grid(row=1, column=0, sticky="nsew", padx=16)
         pkt_table_frame.grid_columnconfigure(0, weight=1)
         pkt_table_frame.grid_rowconfigure(0, weight=1)
-        # reuse packet tree if exists
-        if not hasattr(self, 'packet_tree'):
-            self.packet_tree = ttk.Treeview(pkt_table_frame, columns=("no","time","src_ip","src_port","dst_ip","dst_port","proto","len","flags","info"), show="headings", height=10)
-        cols = [("no","#"),("time","Time"),("src_ip","Source IP"),("src_port","Src Port"),("dst_ip","Dest IP"),("dst_port","Dst Port"),("proto","Proto"),("len","Length"),("flags","Flags"),("info","Info")]
-        for c,h in cols:
-            self.packet_tree.heading(c,text=h)
-            self.packet_tree.column(c,width=90)
+        self.packet_tree = ttk.Treeview(
+            pkt_table_frame,
+            columns=("no", "time", "source", "destination", "protocol", "length", "info"),
+            show="headings",
+            selectmode="browse",
+            style="Shaheen.Treeview",
+        )
+        columns = (
+            ("no", "#", 58, "e"),
+            ("time", "Time", 150, "w"),
+            ("source", "Source", 155, "w"),
+            ("destination", "Destination", 155, "w"),
+            ("protocol", "Protocol", 85, "w"),
+            ("length", "Length", 75, "e"),
+            ("info", "Info", 260, "w"),
+        )
+        for column, heading, width, anchor in columns:
+            self.packet_tree.heading(column, text=heading, anchor=anchor)
+            self.packet_tree.column(column, width=width, minwidth=50, anchor=anchor)
         self.packet_tree.grid(row=0, column=0, sticky="nsew")
-        pscroll = ttk.Scrollbar(pkt_table_frame, orient="vertical", command=self.packet_tree.yview)
+        pscroll = ttk.Scrollbar(
+            pkt_table_frame, orient="vertical", command=self.packet_tree.yview,
+        )
         pscroll.grid(row=0, column=1, sticky="ns")
-        self.packet_tree.configure(yscrollcommand=pscroll.set)
-        try:
-            self.packet_tree.bind("<<TreeviewSelect>>", self._on_packet_select)
-        except Exception:
-            self.packet_tree.bind("<<TreeviewSelect>>", lambda e: self._on_packet_tree_select())
+        xscroll = ttk.Scrollbar(
+            pkt_table_frame, orient="horizontal", command=self.packet_tree.xview,
+        )
+        xscroll.grid(row=1, column=0, sticky="ew")
+        self.packet_tree.configure(yscrollcommand=pscroll.set, xscrollcommand=xscroll.set)
+        self._live_packet_by_iid: dict[str, PacketRecord] = {}
+        self.packet_tree.bind("<<TreeviewSelect>>", self._on_live_packet_tree_select)
 
         # Details
         det_frame = ctk.CTkFrame(live_capture, fg_color="transparent")
@@ -1005,22 +1230,50 @@ class ShaheenMainWindow(ctk.CTk):
         det_frame.grid_columnconfigure((0,1,2), weight=1)
         det1 = ctk.CTkFrame(det_frame, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         det1.grid(row=0, column=0, sticky="nsew", padx=(0,6))
+        det1.grid_columnconfigure(0, weight=1)
+        det1.grid_rowconfigure(1, weight=1)
         ctk.CTkLabel(det1, text="PACKET DETAILS", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=11, weight="bold")).grid(row=0, column=0, sticky="w", padx=14, pady=(10, 4))
-        if not hasattr(self, 'packet_details'):
-            self.packet_details = ctk.CTkTextbox(det1, height=160)
-        self.packet_details.grid(row=1, column=0, sticky="nsew", padx=14, pady=(4, 12))
+        self.live_packet_details = ctk.CTkTextbox(
+            det1,
+            wrap="none",
+            font=("Consolas", 10),
+            fg_color="#0B1220",
+            text_color=PALETTE["text_secondary"],
+        )
+        self.live_packet_details.insert("end", "Select a live packet to inspect decoded fields.")
+        self.live_packet_details.grid(row=1, column=0, sticky="nsew", padx=14, pady=(4, 12))
         det2 = ctk.CTkFrame(det_frame, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         det2.grid(row=0, column=1, sticky="nsew", padx=6)
+        det2.grid_columnconfigure(0, weight=1)
+        det2.grid_rowconfigure(1, weight=1)
         ctk.CTkLabel(det2, text="HEX VIEW", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=11, weight="bold")).grid(row=0, column=0, sticky="w", padx=14, pady=(10, 4))
-        if not hasattr(self, 'packet_hex'):
-            self.packet_hex = ctk.CTkTextbox(det2, height=160)
-        self.packet_hex.grid(row=1, column=0, sticky="nsew", padx=14, pady=(4, 12))
+        self.live_packet_hex = ctk.CTkTextbox(
+            det2,
+            wrap="none",
+            font=("Consolas", 10),
+            fg_color="#0B1220",
+            text_color=PALETTE["text_secondary"],
+        )
+        self.live_packet_hex.insert("end", "Select a live packet to inspect its captured bytes.")
+        self.live_packet_hex.grid(row=1, column=0, sticky="nsew", padx=14, pady=(4, 12))
         det3 = ctk.CTkFrame(det_frame, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         det3.grid(row=0, column=2, sticky="nsew", padx=(6,0))
+        det3.grid_columnconfigure(0, weight=1)
+        det3.grid_rowconfigure(1, weight=1)
         ctk.CTkLabel(det3, text="PROTOCOL STACK", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=11, weight="bold")).grid(row=0, column=0, sticky="w", padx=14, pady=(10, 4))
-        if not hasattr(self, 'packet_protocol_stack'):
-            self.packet_protocol_stack = ctk.CTkTextbox(det3, height=160)
+        self.packet_protocol_stack = ctk.CTkTextbox(
+            det3,
+            wrap="none",
+            font=("Consolas", 10),
+            fg_color="#0B1220",
+            text_color=PALETTE["text_secondary"],
+        )
+        self.packet_protocol_stack.insert("end", "Select a live packet to inspect its protocol stack.")
         self.packet_protocol_stack.grid(row=1, column=0, sticky="nsew", padx=14, pady=(4, 12))
+        self._live_packet_detail_widgets = {
+            "packet_details": self.live_packet_details,
+            "packet_hex": self.live_packet_hex,
+        }
 
         # ensure packet_label hidden for this page
         self.live_capture_info = None
@@ -1078,18 +1331,28 @@ class ShaheenMainWindow(ctk.CTk):
             show="headings",
             selectmode="browse",
             height=12,
+            style="Shaheen.Treeview",
         )
-        for column, heading in (
-            ("time", "Timestamp"),
-            ("severity", "Severity"),
-            ("rule", "Rule"),
-            ("source", "Source"),
-            ("destination", "Destination"),
-            ("status", "Status"),
-        ):
-            self.alert_table.heading(column, text=heading)
-            self.alert_table.column(column, width=120, anchor="w")
+        alert_columns = (
+            ("time", "Timestamp", 175, "w"),
+            ("severity", "Severity", 90, "center"),
+            ("rule", "Rule", 150, "w"),
+            ("source", "Source", 135, "w"),
+            ("destination", "Destination", 135, "w"),
+            ("status", "Status", 105, "center"),
+        )
+        for column, heading, width, anchor in alert_columns:
+            self.alert_table.heading(column, text=heading, anchor=anchor)
+            self.alert_table.column(
+                column,
+                width=width,
+                minwidth=70,
+                anchor=anchor,
+                stretch=column in {"rule", "source", "destination"},
+            )
         self.alert_table.grid(row=0, column=0, sticky="nsew")
+        self.alert_table.tag_configure("row_even", background=PALETTE["bg_table"])
+        self.alert_table.tag_configure("row_odd", background=PALETTE["bg_table_alt"])
         alert_scrollbar = ttk.Scrollbar(
             alert_body, orient="vertical", command=self.alert_table.yview,
         )
@@ -1112,6 +1375,8 @@ class ShaheenMainWindow(ctk.CTk):
             text="Analyze current session",
             command=self._analyze_current_session,
             width=170,
+            fg_color=PALETTE["primary"],
+            hover_color=PALETTE["primary_hover"],
         )
         self.analyze_alerts_button.grid(row=0, column=1, padx=3)
         ctk.CTkButton(
@@ -1129,7 +1394,7 @@ class ShaheenMainWindow(ctk.CTk):
 
         reports = page("Reports")
         reports.grid_columnconfigure((0,1,2), weight=1)
-        reports.grid_rowconfigure(4, weight=1)
+        reports.grid_rowconfigure(3, weight=1)
 
         # Header
         rep_h = ctk.CTkFrame(reports, fg_color="transparent")
@@ -1150,7 +1415,7 @@ class ShaheenMainWindow(ctk.CTk):
                 except Exception:
                     pass
             ctk.CTkButton(rep_c, text="Refresh", command=_r, height=32, width=90).pack(side="left", padx=6)
-        ctk.CTkButton(rep_c, text="Generate New Report", height=32, width=150, fg_color=PALETTE["primary"], hover_color=PALETTE["primary_hover"]).pack(side="left")
+        ctk.CTkButton(rep_c, text="Generate New Report", command=self._generate_comprehensive_report, height=32, width=150, fg_color=PALETTE["primary"], hover_color=PALETTE["primary_hover"]).pack(side="left")
 
         # KPI
         rkpi = ctk.CTkFrame(reports, fg_color="transparent")
@@ -1174,10 +1439,12 @@ class ShaheenMainWindow(ctk.CTk):
         # Generate workspace
         gen = ctk.CTkFrame(reports, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         gen.grid(row=2, column=0, columnspan=3, sticky="ew", padx=24, pady=(0,12))
-        gen.grid_columnconfigure((0,1,2), weight=1)
+        gen.grid_columnconfigure(0, weight=3)
+        gen.grid_columnconfigure(1, weight=1)
+        gen.grid_columnconfigure(2, weight=0)
         ctk.CTkLabel(gen, text="GENERATE SECURITY REPORT", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=13, weight="bold")).grid(row=0,column=0,columnspan=3,sticky="w",padx=18,pady=(14,8))
         ctk.CTkLabel(gen, text="Report Type", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=10)).grid(row=1,column=0,sticky="w",padx=18)
-        self.report_type_menu = ctk.CTkOptionMenu(gen, values=["Network Traffic Analysis Report","Packet Capture Summary","Security Threat Detection Report","Alert Analysis Report","Investigation Timeline Report","Comprehensive SOC Report"], width=260)
+        self.report_type_menu = ctk.CTkOptionMenu(gen, values=["Network Traffic Analysis Report","Packet Capture Summary","Security Threat Detection Report","Alert Analysis Report","Investigation Timeline Report","Comprehensive SOC Report"], width=320)
         self.report_type_menu.grid(row=2,column=0,sticky="w",padx=18,pady=(2,10))
         ctk.CTkLabel(gen, text="Format", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=10)).grid(row=1,column=1,sticky="w",padx=18)
         self.report_format_menu = ctk.CTkOptionMenu(gen, values=["PDF","CSV","JSON","HTML"], width=140)
@@ -1191,8 +1458,8 @@ class ShaheenMainWindow(ctk.CTk):
                 except Exception:
                     pass
             ctk.CTkButton(gen, text="Generate Report", command=_g, height=32, fg_color=PALETTE["primary"], hover_color=PALETTE["primary_hover"]).grid(row=2,column=2,sticky="e",padx=18,pady=(2,10))
-        ctk.CTkButton(gen, text="Export Current Session Packets (CSV)", command=self._export_packets_csv, height=28).grid(row=3,column=0,sticky="w",padx=18,pady=(0,12))
-        ctk.CTkButton(gen, text="Export Active Investigation Timeline", command=self._export_investigation, height=28).grid(row=3,column=1,sticky="w",padx=18,pady=(0,12))
+        ctk.CTkButton(gen, text="Export Current Session Packets (CSV)", command=self._export_packets_csv, height=30, fg_color=PALETTE["bg_card_alt"], hover_color=PALETTE["nav_hover"]).grid(row=3,column=0,sticky="w",padx=18,pady=(2,12))
+        ctk.CTkButton(gen, text="Export Active Investigation Timeline", command=self._export_investigation, height=30, fg_color=PALETTE["bg_card_alt"], hover_color=PALETTE["nav_hover"]).grid(row=3,column=1,sticky="w",padx=18,pady=(2,12))
         ctk.CTkLabel(gen, text=f"Report Directory: {self.app.settings.report_path}", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=10)).grid(row=4,column=0,columnspan=3,sticky="w",padx=18,pady=(0,14))
 
         # History
@@ -1200,19 +1467,95 @@ class ShaheenMainWindow(ctk.CTk):
         hist.grid(row=3, column=0, columnspan=3, sticky="nsew", padx=24, pady=(0,16))
         hist.grid_columnconfigure(0, weight=1)
         hist.grid_rowconfigure(1, weight=1)
-        ctk.CTkLabel(hist, text="GENERATED REPORTS", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=13, weight="bold")).grid(row=0,column=0,sticky="w",padx=18,pady=(14,8))
+        hist_header = ctk.CTkFrame(hist, fg_color="transparent")
+        hist_header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=18, pady=(12, 8))
+        hist_header.grid_columnconfigure(0, weight=1)
+        hist_title = ctk.CTkFrame(hist_header, fg_color="transparent")
+        hist_title.pack(side="left", anchor="w")
+        ctk.CTkLabel(hist_title, text="GENERATED REPORTS", text_color=PALETTE["text_primary"], font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w")
+        self.report_selection_label = ctk.CTkLabel(
+            hist_title,
+            text="Select a report to download",
+            text_color=PALETTE["text_secondary"],
+            font=ctk.CTkFont(size=10),
+        )
+        self.report_selection_label.pack(anchor="w", pady=(2, 0))
+        self.report_download_button = ctk.CTkButton(
+            hist_header,
+            text="Download Selected Report",
+            command=self._download_selected_report,
+            height=30,
+            width=190,
+            state="disabled",
+            fg_color=PALETTE["primary"],
+            hover_color=PALETTE["primary_hover"],
+        )
+        self.report_download_button.pack(side="right", padx=(12, 0))
         rep_tbl_frame = ttk.Frame(hist)
-        rep_tbl_frame.grid(row=1,column=0,sticky="nsew",padx=18,pady=(0,14))
+        rep_tbl_frame.grid(row=1,column=0,columnspan=2,sticky="nsew",padx=18,pady=(0,14))
         rep_tbl_frame.grid_columnconfigure(0, weight=1)
         rep_tbl_frame.grid_rowconfigure(0, weight=1)
-        self.report_history_table = ttk.Treeview(rep_tbl_frame, columns=("id","name","type","date","period","format","size","status"), show="headings", height=8)
-        for c,h,w in [("id","Report ID",80),("name","Report Name",200),("type","Report Type",200),("date","Generated Date",150),("period","Reporting Period",150),("format","Format",80),("size","File Size",90),("status","Status",90)]:
-            self.report_history_table.heading(c,text=h)
-            self.report_history_table.column(c,width=w)
+        self.report_history_table = ttk.Treeview(
+            rep_tbl_frame,
+            columns=("id","name","type","date","period","format","size","status"),
+            show="headings",
+            height=8,
+            selectmode="browse",
+            style="ShaheenReports.Treeview",
+        )
+        report_columns = [
+            ("id", "ID", 48, "center", False),
+            ("name", "Report Name", 180, "w", True),
+            ("type", "Report Type", 150, "w", True),
+            ("date", "Generated", 125, "center", False),
+            ("period", "Period", 110, "center", True),
+            ("format", "Format", 60, "center", False),
+            ("size", "Size", 75, "e", False),
+            ("status", "Status", 65, "center", False),
+        ]
+        for column, heading, width, anchor, stretch in report_columns:
+            self.report_history_table.heading(column, text=heading, anchor=anchor)
+            self.report_history_table.column(
+                column,
+                width=width,
+                minwidth=48,
+                anchor=anchor,
+                stretch=stretch,
+            )
         self.report_history_table.grid(row=0,column=0,sticky="nsew")
-        rscroll = ttk.Scrollbar(rep_tbl_frame, orient="vertical", command=self.report_history_table.yview)
-        rscroll.grid(row=0,column=1,sticky="ns")
-        self.report_history_table.configure(yscrollcommand=rscroll.set)
+        report_y_scroll = ttk.Scrollbar(
+            rep_tbl_frame,
+            orient="vertical",
+            command=self.report_history_table.yview,
+            style="ShaheenReports.Vertical.TScrollbar",
+        )
+        report_y_scroll.grid(row=0,column=1,sticky="ns")
+        report_x_scroll = ttk.Scrollbar(
+            rep_tbl_frame,
+            orient="horizontal",
+            command=self.report_history_table.xview,
+            style="ShaheenReports.Horizontal.TScrollbar",
+        )
+        report_x_scroll.grid(row=1,column=0,sticky="ew")
+        self.report_history_table.configure(
+            yscrollcommand=report_y_scroll.set,
+            xscrollcommand=report_x_scroll.set,
+        )
+        self.report_empty_label = ctk.CTkLabel(
+            rep_tbl_frame,
+            text="No reports yet\nChoose a report type and generate your first report.",
+            justify="center",
+            text_color=PALETTE["text_secondary"],
+            fg_color=PALETTE["bg_table"],
+            font=ctk.CTkFont(size=13),
+        )
+        self.report_empty_label.place(relx=0.5, rely=0.5, anchor="center")
+        self.report_history_table.bind(
+            "<<TreeviewSelect>>", self._update_report_selection_ui
+        )
+        self.report_history_table.bind(
+            "<Double-1>", lambda _event: self._download_selected_report()
+        )
 
         try:
             self._load_report_history()
@@ -1225,7 +1568,7 @@ class ShaheenMainWindow(ctk.CTk):
 
         settings = page("Settings")
         settings.grid_columnconfigure(1, weight=1)
-        settings.grid_rowconfigure(2, weight=1)
+        settings.grid_rowconfigure(1, weight=1)
 
         # Header
         st_h = ctk.CTkFrame(settings, fg_color="transparent")
@@ -1264,41 +1607,31 @@ class ShaheenMainWindow(ctk.CTk):
             b = ctk.CTkButton(nav_frame, text="  " + c, anchor="w", height=36, fg_color="transparent", hover_color=PALETTE["nav_hover"], text_color=PALETTE["text_label"], command=lambda name=c: self._select_settings_category(name))
             b.grid(row=i+1, column=0, sticky="ew", padx=10, pady=2)
             self._settings_nav[c] = b
-        if cats:
-            try:
-                self._select_settings_category(cats[0])
-            except Exception:
-                pass
-
         # Content area
         self.settings_content = ctk.CTkScrollableFrame(settings, fg_color=PALETTE["bg_card"], corner_radius=10, border_width=1, border_color=PALETTE["border"])
         self.settings_content.grid(row=1, column=1, sticky="nsew", padx=(0,24), pady=(0,16))
         self.settings_content.grid_columnconfigure(0, weight=1)
         self._settings_pages = {}
-        try:
-            self._build_settings_ui_fixed()
-        except Exception:
-            try:
-                self._build_settings_ui()
-            except Exception:
-                try:
-                    self._load_settings_form()
-                except Exception:
-                    pass
+        self._build_settings_ui()
 
         self.settings_status = ctk.CTkLabel(
             settings, text="", anchor="w", text_color=PALETTE["text_label"], font=ctk.CTkFont(size=10),
         )
         self.settings_status.grid(row=2, column=0, columnspan=2, padx=24, pady=(0,12), sticky="ew")
+        self._select_settings_category(cats[0])
+        self._load_settings_form()
         self.after(200, self._poll_alert_events)
         self.after(200, self._poll_capture_stop_events)
 
     def _show_navigation_page(self, name: str) -> None:
-        try:
-            self._update_nav_active_state(name)
-        except Exception:
-            pass
-        self.toolbar.grid()
+        if name == "Live Capture" and hasattr(self, "_live_packet_detail_widgets"):
+            for widget_name, widget in self._live_packet_detail_widgets.items():
+                setattr(self, widget_name, widget)
+        elif name != "Live Capture":
+            for widget_name, widget in self._packet_analyzer_detail_widgets.items():
+                setattr(self, widget_name, widget)
+        self._set_active_capture_controls(name == "Live Capture")
+        self.toolbar.grid_remove()
         self.packet_label.grid()
         self.workspace.grid_remove()
         self.investigation_bar.grid_remove()
@@ -1306,6 +1639,7 @@ class ShaheenMainWindow(ctk.CTk):
             frame.grid_remove()
         if name == "Packet Analyzer":
             self.header.configure(text=name)
+            self.toolbar.grid()
             self.packet_label.grid()
             self.workspace.grid()
             self.investigation_bar.grid()
@@ -1315,8 +1649,35 @@ class ShaheenMainWindow(ctk.CTk):
         page = self._navigation_pages.get(name)
         if page is not None:
             page.grid()
-        if name not in {"Live Capture"}:
-            self.toolbar.grid_remove()
+
+    def _set_active_capture_controls(self, live_capture: bool) -> None:
+        current_values = list(self.interface_menu.cget("values"))
+        controls = (
+            self._live_capture_controls
+            if live_capture and hasattr(self, "_live_capture_controls")
+            else self._packet_analyzer_controls
+        )
+        current_interface = self.interface_menu.get()
+        current_filter = self.filter_entry.get()
+        for name, widget in controls.items():
+            setattr(self, name, widget)
+        self.interface_menu.configure(values=current_values)
+        self.interface_menu.set(
+            current_interface
+            if current_interface in current_values
+            else "Select interface"
+        )
+        self.filter_entry.delete(0, "end")
+        self.filter_entry.insert(0, current_filter)
+        if hasattr(self, "live_filter_status"):
+            self.live_filter_status.configure(
+                text=(
+                    f"Active filter: {self._current_filter}"
+                    if self._current_filter
+                    else "No active filter"
+                )
+            )
+        self._update_capture_controls()
 
     def _refresh_dashboard(self) -> None:
         try:
@@ -1379,25 +1740,18 @@ class ShaheenMainWindow(ctk.CTk):
             if hasattr(self, 'dashboard_last_update'):
                 self.dashboard_last_update.configure(text=f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
 
-            # Traffic overview
-            if hasattr(self, 'dashboard_traffic_text'):
-                if packet_count == 0:
-                    self.dashboard_traffic_text.configure(text="No network traffic data available. Start a capture or import a PCAP file.")
-                else:
-                    self.dashboard_traffic_text.configure(text=f"Observed {packet_count:,} packets totaling {int(total_bytes or 0):,} bytes across stored sessions.")
+            if hasattr(self, "dashboard_network_canvas"):
+                self._load_dashboard_network_data()
 
             # Protocol distribution
-            if hasattr(self, 'dashboard_protocol_text'):
+            if hasattr(self, "dashboard_protocol_canvas"):
                 proto_rows = self.app.db.execute(
                     "SELECT protocol, COUNT(*) as c FROM packets WHERE protocol IS NOT NULL AND protocol != '' GROUP BY protocol ORDER BY c DESC LIMIT 6"
                 ).fetchall()
-                if not proto_rows:
-                    self.dashboard_protocol_text.configure(text="No protocol data available.")
-                else:
-                    lines = []
-                    for r in proto_rows:
-                        lines.append(f"{r['protocol']}: {r['c']:,} packets")
-                    self.dashboard_protocol_text.configure(text="\n".join(lines))
+                self._dashboard_protocol_data = [
+                    (str(row["protocol"]), int(row["c"])) for row in proto_rows
+                ]
+                self._render_dashboard_protocol_chart()
 
             # Top IPs
             if hasattr(self, 'dashboard_top_src'):
@@ -1425,41 +1779,39 @@ class ShaheenMainWindow(ctk.CTk):
                         lines.append(f"{ip} {int(r['c']):<12} {int(r['b']):,}")
                     self.dashboard_top_dst.configure(text="\n".join(lines))
 
-            # Alerts overview
-            if hasattr(self, 'dashboard_alerts_overview'):
+            # Alert severity distribution
+            if hasattr(self, "dashboard_alerts_canvas"):
                 arows = self.app.db.execute(
                     "SELECT severity, COUNT(*) as c FROM alerts GROUP BY severity"
                 ).fetchall()
-                if not arows:
-                    self.dashboard_alerts_overview.configure(text="No security alerts.")
-                else:
-                    parts = []
-                    for r in arows:
-                        sev = str(r['severity'] or 'Unknown')
-                        parts.append(f"{sev}: {r['c']}")
-                    self.dashboard_alerts_overview.configure(text="  |  ".join(parts))
+                self._dashboard_alert_data = [
+                    (str(row["severity"] or "Unknown"), int(row["c"]))
+                    for row in arows
+                ]
+                self._render_dashboard_alert_chart()
 
-            # Recent activity
-            if hasattr(self, 'dashboard_recent'):
-                rrows = self.app.db.execute(
-                    "SELECT timestamp, source_address, destination_address, protocol, packet_length FROM packets ORDER BY id DESC LIMIT 5"
+            # Packet volume by captured hour
+            if hasattr(self, "dashboard_timeline_canvas"):
+                time_rows = self.app.db.execute(
+                    """
+                    SELECT substr(timestamp, 1, 13) AS hour_bucket, COUNT(*) AS packet_count
+                    FROM packets
+                    WHERE timestamp IS NOT NULL AND timestamp != ''
+                    GROUP BY hour_bucket
+                    ORDER BY hour_bucket DESC
+                    LIMIT 12
+                    """
                 ).fetchall()
-                if not rrows:
-                    self.dashboard_recent.configure(text="No recent activity.")
-                else:
-                    lines = ["Time        Src              Dst              Proto  Len"]
-                    for r in rrows:
-                        ts = str(r['timestamp'] or '-')[:10]
-                        src = str(r['source_address'] or '-')[:16].ljust(16)
-                        dst = str(r['destination_address'] or '-')[:16].ljust(16)
-                        proto = str(r['protocol'] or '-')[:5].ljust(5)
-                        lines.append(f"{ts} {src} {dst} {proto} {r['packet_length'] or 0}")
-                    self.dashboard_recent.configure(text="\n".join(lines))
+                self._dashboard_timeline_data = [
+                    (str(row["hour_bucket"]), int(row["packet_count"]))
+                    for row in reversed(time_rows)
+                ]
+                self._render_dashboard_timeline()
 
             # Health
             if hasattr(self, 'dashboard_health'):
                 avail, msg = self.capture_manager.capture_provider_status()
-                health = f"Capture Engine: {'OK' if self.capture_manager.is_running or True else 'IDLE'}\n"
+                health = f"Capture Engine: {'Running' if self.capture_manager.is_running else 'Idle'}\n"
                 health += f"Npcap/Libpcap: {'Available' if avail else 'Unavailable'}\n"
                 health += f"Database: Connected\n"
                 health += f"Status: {msg[:60]}\n"
@@ -1468,10 +1820,380 @@ class ShaheenMainWindow(ctk.CTk):
 
         except Exception as exc:
             self.app.logger.exception("Could not load Dashboard statistics")
-            if hasattr(self, 'dashboard_traffic_text'):
-                self.dashboard_traffic_text.configure(text=f"Dashboard data unavailable: {exc}")
+            if hasattr(self, "dashboard_graph_status"):
+                self.dashboard_graph_status.configure(
+                    text=f"Dashboard graph unavailable: {exc}",
+                )
             if hasattr(self, 'dashboard_health'):
                 self.dashboard_health.configure(text="System health unavailable")
+
+    def _render_dashboard_protocol_chart(self) -> None:
+        self._render_dashboard_bar_chart(
+            "dashboard_protocol_canvas",
+            getattr(self, "_dashboard_protocol_data", []),
+            [PALETTE["primary"], "#06B6D4", "#8B5CF6", PALETTE["success"]],
+            "No protocol data available.",
+        )
+
+    def _render_dashboard_alert_chart(self) -> None:
+        severity_colors = {
+            "critical": PALETTE["danger"],
+            "high": "#F97316",
+            "medium": PALETTE["warning"],
+            "low": PALETTE["success"],
+        }
+        data = getattr(self, "_dashboard_alert_data", [])
+        self._render_dashboard_bar_chart(
+            "dashboard_alerts_canvas",
+            data,
+            [
+                severity_colors.get(name.lower(), PALETTE["primary"])
+                for name, _count in data
+            ],
+            "No security alerts.",
+        )
+
+    def _render_dashboard_bar_chart(
+        self,
+        canvas_name: str,
+        data: list[tuple[str, int]],
+        colors: list[str],
+        empty_text: str,
+    ) -> None:
+        canvas = getattr(self, canvas_name, None)
+        if canvas is None:
+            return
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 240)
+        height = max(canvas.winfo_height(), 70)
+        if not data:
+            canvas.create_text(
+                width / 2,
+                height / 2,
+                text=empty_text,
+                fill=PALETTE["text_label"],
+                font=("TkDefaultFont", 9),
+            )
+            return
+
+        row_height = min(23, max(16, (height - 8) // len(data)))
+        top = max(4, (height - row_height * len(data)) // 2)
+        label_width = min(82, max(55, width // 4))
+        value_width = 42
+        bar_left = label_width + 8
+        bar_right = max(bar_left + 12, width - value_width - 12)
+        bar_width = bar_right - bar_left
+        max_value = max(count for _name, count in data) or 1
+
+        for index, (name, count) in enumerate(data):
+            y = top + index * row_height
+            color = colors[index % len(colors)] if colors else PALETTE["primary"]
+            canvas.create_text(
+                2,
+                y + row_height / 2,
+                text=name[:12],
+                anchor="w",
+                fill=PALETTE["text_label"],
+                font=("TkDefaultFont", 8),
+            )
+            canvas.create_rectangle(
+                bar_left,
+                y + row_height * 0.25,
+                bar_right,
+                y + row_height * 0.75,
+                fill=PALETTE["bg_card_alt"],
+                outline="",
+            )
+            filled_width = max(2, bar_width * count / max_value)
+            canvas.create_rectangle(
+                bar_left,
+                y + row_height * 0.25,
+                bar_left + filled_width,
+                y + row_height * 0.75,
+                fill=color,
+                outline="",
+            )
+            canvas.create_text(
+                width - 2,
+                y + row_height / 2,
+                text=f"{count:,}",
+                anchor="e",
+                fill=PALETTE["text_primary"],
+                font=("TkDefaultFont", 8),
+            )
+
+    def _render_dashboard_timeline(self) -> None:
+        canvas = getattr(self, "dashboard_timeline_canvas", None)
+        if canvas is None:
+            return
+        canvas.delete("all")
+        data = getattr(self, "_dashboard_timeline_data", [])
+        width = max(canvas.winfo_width(), 320)
+        height = max(canvas.winfo_height(), 90)
+        if not data:
+            canvas.create_text(
+                width / 2,
+                height / 2,
+                text="No timestamped packet data available.",
+                fill=PALETTE["text_label"],
+                font=("TkDefaultFont", 9),
+            )
+            return
+
+        left, right, top, bottom = 42, width - 12, 12, height - 24
+        plot_height = max(20, bottom - top)
+        max_packets = max(count for _bucket, count in data) or 1
+        for fraction in (0, 0.5, 1):
+            y = bottom - plot_height * fraction
+            canvas.create_line(
+                left,
+                y,
+                right,
+                y,
+                fill=PALETTE["border"],
+                dash=(2, 3),
+            )
+            canvas.create_text(
+                left - 5,
+                y,
+                text=f"{int(max_packets * fraction):,}",
+                anchor="e",
+                fill=PALETTE["text_muted"],
+                font=("TkDefaultFont", 7),
+            )
+
+        points = []
+        for index, (_bucket, count) in enumerate(data):
+            x = (
+                (left + right) / 2
+                if len(data) == 1
+                else left + (right - left) * index / (len(data) - 1)
+            )
+            y = bottom - plot_height * count / max_packets
+            points.extend((x, y))
+        if len(points) >= 4:
+            canvas.create_line(
+                *points,
+                fill=PALETTE["primary"],
+                width=2,
+                smooth=True,
+            )
+        for index in range(0, len(points), 2):
+            x, y = points[index:index + 2]
+            canvas.create_oval(
+                x - 3,
+                y - 3,
+                x + 3,
+                y + 3,
+                fill=PALETTE["info"],
+                outline=PALETTE["text_primary"],
+            )
+        for index in sorted({0, len(data) // 2, len(data) - 1}):
+            bucket = data[index][0]
+            label = (
+                f"{bucket[5:10]} {bucket[11:13]}"
+                if len(bucket) >= 13
+                else bucket
+            )
+            x = (
+                (left + right) / 2
+                if len(data) == 1
+                else left + (right - left) * index / (len(data) - 1)
+            )
+            canvas.create_text(
+                x,
+                height - 8,
+                text=label,
+                fill=PALETTE["text_muted"],
+                font=("TkDefaultFont", 7),
+            )
+
+    def _load_dashboard_network_data(self) -> None:
+        host_rows = self.app.db.execute(
+            f"""
+            SELECT address, SUM(packet_count) AS packet_count
+            FROM (
+                SELECT source_address AS address, COUNT(*) AS packet_count
+                FROM packets
+                WHERE source_address IS NOT NULL AND source_address != ''
+                GROUP BY source_address
+                UNION ALL
+                SELECT destination_address AS address, COUNT(*) AS packet_count
+                FROM packets
+                WHERE destination_address IS NOT NULL AND destination_address != ''
+                GROUP BY destination_address
+            )
+            GROUP BY address
+            ORDER BY packet_count DESC, address
+            LIMIT {MAX_DASHBOARD_GRAPH_HOSTS}
+            """
+        ).fetchall()
+        self._dashboard_traffic_hosts = [
+            (str(row["address"]), int(row["packet_count"])) for row in host_rows
+        ]
+        nmap_addresses = list(getattr(self, "_nmap_hosts", {}))
+        addresses = list(
+            dict.fromkeys(
+                [
+                    *nmap_addresses[: MAX_DASHBOARD_GRAPH_HOSTS // 2],
+                    *(address for address, _count in self._dashboard_traffic_hosts),
+                    *nmap_addresses,
+                ]
+            )
+        )[:MAX_DASHBOARD_GRAPH_HOSTS]
+        self._dashboard_network_edges = []
+        if addresses:
+            placeholders = ",".join("?" for _ in addresses)
+            edge_rows = self.app.db.execute(
+                f"""
+                SELECT source_address, destination_address, COUNT(*) AS packet_count
+                FROM packets
+                WHERE source_address IN ({placeholders})
+                  AND destination_address IN ({placeholders})
+                  AND source_address != destination_address
+                GROUP BY source_address, destination_address
+                ORDER BY packet_count DESC
+                LIMIT 48
+                """,
+                (*addresses, *addresses),
+            ).fetchall()
+            self._dashboard_network_edges = [
+                (
+                    str(row["source_address"]),
+                    str(row["destination_address"]),
+                    int(row["packet_count"]),
+                )
+                for row in edge_rows
+            ]
+        self._render_dashboard_network_graph()
+
+    def _render_dashboard_network_graph(self) -> None:
+        canvas = getattr(self, "dashboard_network_canvas", None)
+        if canvas is None:
+            return
+        canvas.delete("all")
+        nmap_hosts = getattr(self, "_nmap_hosts", {})
+        traffic_hosts = dict(getattr(self, "_dashboard_traffic_hosts", []))
+        nmap_addresses = list(nmap_hosts)
+        addresses = list(
+            dict.fromkeys(
+                [
+                    *nmap_addresses[: MAX_DASHBOARD_GRAPH_HOSTS // 2],
+                    *(address for address, _count in getattr(self, "_dashboard_traffic_hosts", [])),
+                    *nmap_addresses,
+                ]
+            )
+        )[:MAX_DASHBOARD_GRAPH_HOSTS]
+        width = max(canvas.winfo_width(), 320)
+        height = max(canvas.winfo_height(), 140)
+        if not addresses:
+            canvas.create_text(
+                width / 2,
+                height / 2,
+                text="No hosts yet — import Nmap XML or capture network traffic.",
+                fill=PALETTE["text_label"],
+                font=("TkDefaultFont", 10),
+            )
+            return
+
+        center_x, center_y = width / 2, height / 2
+        radius_x = max(35, width / 2 - 60)
+        radius_y = max(20, height / 2 - 38)
+        positions: dict[str, tuple[float, float]] = {}
+        for index, address in enumerate(addresses):
+            angle = -math.pi / 2 + (2 * math.pi * index / len(addresses))
+            positions[address] = (
+                center_x + radius_x * math.cos(angle),
+                center_y + radius_y * math.sin(angle),
+            )
+
+        for source, destination, packet_count in getattr(
+            self, "_dashboard_network_edges", [],
+        ):
+            if source not in positions or destination not in positions:
+                continue
+            x1, y1 = positions[source]
+            x2, y2 = positions[destination]
+            canvas.create_line(
+                x1,
+                y1,
+                x2,
+                y2,
+                fill=PALETTE["border"],
+                width=min(4, 1 + math.log2(max(packet_count, 1)) / 2),
+                arrow=tk.LAST,
+                arrowshape=(8, 10, 4),
+            )
+
+        max_label_length = max(10, min(14, int(width / max(len(addresses), 1) / 7)))
+        for address, (x, y) in positions.items():
+            scan_host = nmap_hosts.get(address)
+            node_color = "#8B5CF6" if scan_host else PALETTE["primary"]
+            canvas.create_oval(
+                x - 12,
+                y - 12,
+                x + 12,
+                y + 12,
+                fill=node_color,
+                outline=PALETTE["text_primary"],
+                width=1,
+            )
+            display_address = address
+            if len(display_address) > max_label_length:
+                prefix_length = max_label_length // 2
+                suffix_length = max_label_length - prefix_length - 1
+                display_address = (
+                    display_address[:prefix_length]
+                    + "…"
+                    + display_address[-suffix_length:]
+                )
+            canvas.create_text(
+                x,
+                y + 23,
+                text=display_address,
+                fill=PALETTE["text_primary"],
+                font=("TkDefaultFont", 8, "bold"),
+            )
+            if scan_host and scan_host.open_ports:
+                detail = ", ".join(scan_host.open_ports[:2])
+            elif scan_host and scan_host.hostname:
+                detail = scan_host.hostname
+            else:
+                detail = f"{traffic_hosts.get(address, 0):,} packets"
+            if len(detail) > 24:
+                detail = detail[:23] + "…"
+            canvas.create_text(
+                x,
+                y + 35,
+                text=detail,
+                fill=PALETTE["text_label"],
+                font=("TkDefaultFont", 7),
+            )
+
+    def _import_nmap_results(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Import Nmap XML scan results",
+            filetypes=[("Nmap XML results", "*.xml"), ("XML files", "*.xml")],
+        )
+        if not path:
+            return
+        try:
+            hosts = parse_nmap_xml(path)
+        except ValueError as exc:
+            self.app.logger.exception("Could not import Nmap XML results")
+            messagebox.showerror("Nmap XML import", str(exc))
+            return
+
+        self._nmap_hosts = {host.address: host for host in hosts}
+        self._load_dashboard_network_data()
+        open_port_count = sum(len(host.open_ports) for host in hosts)
+        self.dashboard_graph_status.configure(
+            text=(
+                f"Nmap XML: {len(hosts):,} hosts · {open_port_count:,} open services "
+                f"· up to {MAX_DASHBOARD_GRAPH_HOSTS} hosts shown "
+                "· violet nodes are discovered hosts · arrows show captured flows"
+            )
+        )
 
     def _load_settings_form(self) -> None:
         self.settings_theme.set(self.app.settings.theme)
@@ -1479,6 +2201,340 @@ class ShaheenMainWindow(ctk.CTk):
         self.settings_capture_filter.insert(0, self.app.settings.capture_filter)
         self.settings_report_path.delete(0, "end")
         self.settings_report_path.insert(0, self.app.settings.report_path)
+
+    def _build_settings_ui(self) -> None:
+        def category_page(name: str, title: str, description: str):
+            page = ctk.CTkFrame(self.settings_content, fg_color="transparent")
+            page.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(
+                page,
+                text=title,
+                text_color=PALETTE["text_primary"],
+                font=ctk.CTkFont(size=20, weight="bold"),
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=20, pady=(18, 4))
+            ctk.CTkLabel(
+                page,
+                text=description,
+                text_color=PALETTE["text_label"],
+                font=ctk.CTkFont(size=11),
+                anchor="w",
+                justify="left",
+                wraplength=760,
+            ).grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 16))
+            self._settings_pages[name] = page
+            return page
+
+        def section(parent, row: int, title: str, description: str):
+            card = ctk.CTkFrame(
+                parent,
+                fg_color=PALETTE["bg_panel"],
+                corner_radius=8,
+                border_width=1,
+                border_color=PALETTE["border"],
+            )
+            card.grid(row=row, column=0, sticky="ew", padx=20, pady=(0, 12))
+            card.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(
+                card,
+                text=title,
+                text_color=PALETTE["text_primary"],
+                font=ctk.CTkFont(size=13, weight="bold"),
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 4))
+            ctk.CTkLabel(
+                card,
+                text=description,
+                text_color=PALETTE["text_label"],
+                font=ctk.CTkFont(size=10),
+                anchor="w",
+                justify="left",
+                wraplength=700,
+            ).grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 12))
+            return card
+
+        general = category_page(
+            "General",
+            "General",
+            "Manage the application appearance and review core application information.",
+        )
+        general_card = section(
+            general, 2, "Appearance", "Choose how SHAHEEN displays the application interface.",
+        )
+        ctk.CTkLabel(
+            general_card,
+            text="Theme",
+            text_color=PALETTE["text_label"],
+            font=ctk.CTkFont(size=11),
+            anchor="w",
+        ).grid(row=2, column=0, sticky="w", padx=16, pady=(0, 4))
+        self.settings_theme = ctk.CTkOptionMenu(
+            general_card,
+            values=["dark", "light", "system"],
+            width=180,
+        )
+        self.settings_theme.grid(row=3, column=0, sticky="w", padx=16, pady=(0, 14))
+        section(
+            general,
+            3,
+            "Application",
+            f"{self.app.settings.app_name} · Network Traffic Analysis",
+        )
+
+        capture = category_page(
+            "Network Capture",
+            "Network Capture",
+            "Configure the packet capture filter. Changes are saved for future captures.",
+        )
+        capture_card = section(
+            capture,
+            2,
+            "Capture filter",
+            "Enter a capture filter supported by the capture provider, or leave it empty to capture all traffic.",
+        )
+        self.settings_capture_filter = ctk.CTkEntry(
+            capture_card,
+            placeholder_text="e.g. tcp port 443",
+            height=34,
+        )
+        self.settings_capture_filter.grid(
+            row=2, column=0, sticky="ew", padx=16, pady=(0, 14),
+        )
+        capture_info = section(
+            capture, 3, "Capture storage", f"Capture files are stored in:\n{self.app.settings.capture_path}",
+        )
+        ctk.CTkLabel(
+            capture_info,
+            text=f"Maximum packet snapshot length: {self.app.settings.snap_length:,} bytes",
+            text_color=PALETTE["text_label"],
+            font=ctk.CTkFont(size=10),
+            anchor="w",
+        ).grid(row=2, column=0, sticky="w", padx=16, pady=(0, 14))
+
+        analysis = category_page(
+            "Packet Analysis",
+            "Packet Analysis",
+            "Packet display filters and packet inspection are available in the Packet Analyzer workspace.",
+        )
+        section(
+            analysis,
+            2,
+            "Packet Analyzer",
+            "Use the display-filter bar in Packet Analyzer to narrow the visible packet list. "
+            "Select a packet to inspect its decoded fields and captured bytes.",
+        )
+
+        performance = category_page(
+            "Performance",
+            "Performance",
+            "At-a-glance limits that keep live capture, packet browsing, and traffic visualization responsive.",
+        )
+        performance_summary = ctk.CTkFrame(
+            performance,
+            fg_color="transparent",
+        )
+        performance_summary.grid(
+            row=2, column=0, sticky="ew", padx=20, pady=(0, 14),
+        )
+        for column in range(3):
+            performance_summary.grid_columnconfigure(column, weight=1, uniform="performance")
+        performance_metrics = [
+            (
+                "LIVE PACKET VIEW",
+                f"{self.MAX_PACKET_ROWS:,}",
+                "Maximum retained rows",
+            ),
+            (
+                "PACKET PAGE SIZE",
+                "100–1,000",
+                "Rows per page · default 200",
+            ),
+            (
+                "TRAFFIC GRAPH",
+                str(MAX_DASHBOARD_GRAPH_HOSTS),
+                "Hosts shown at a time",
+            ),
+        ]
+        for column, (label, value, detail) in enumerate(performance_metrics):
+            metric = ctk.CTkFrame(
+                performance_summary,
+                fg_color=PALETTE["bg_panel"],
+                corner_radius=8,
+                border_width=1,
+                border_color=PALETTE["border"],
+            )
+            metric.grid(
+                row=0, column=column, sticky="nsew",
+                padx=(0 if column == 0 else 6, 6 if column < 2 else 0),
+            )
+            ctk.CTkLabel(
+                metric,
+                text=label,
+                text_color=PALETTE["text_label"],
+                font=ctk.CTkFont(size=9, weight="bold"),
+                anchor="w",
+            ).pack(anchor="w", padx=14, pady=(13, 5))
+            ctk.CTkLabel(
+                metric,
+                text=value,
+                text_color=PALETTE["text_primary"],
+                font=ctk.CTkFont(size=22, weight="bold"),
+                anchor="w",
+            ).pack(anchor="w", padx=14)
+            ctk.CTkLabel(
+                metric,
+                text=detail,
+                text_color=PALETTE["text_secondary"],
+                font=ctk.CTkFont(size=9),
+                anchor="w",
+            ).pack(anchor="w", padx=14, pady=(2, 13))
+        section(
+            performance,
+            3,
+            "Browse large captures",
+            "Use Previous and Next in Packet Analyzer to move through a capture. "
+            "Choose a page size that suits your workflow; the live packet view keeps the newest "
+            f"{self.MAX_PACKET_ROWS:,} rows to limit memory use.",
+        )
+        section(
+            performance,
+            4,
+            "Traffic visualization",
+            f"The Dashboard limits its network graph to {MAX_DASHBOARD_GRAPH_HOSTS} hosts "
+            "so traffic relationships remain readable, prioritizing high-traffic addresses and "
+            "including imported Nmap hosts when available.",
+        )
+
+        storage = category_page(
+            "Storage & Database",
+            "Storage & Database",
+            "Review the locations used for the application database and captured traffic.",
+        )
+        section(storage, 2, "Database", self.app.settings.database_path)
+        section(storage, 3, "Capture files", self.app.settings.capture_path)
+
+        reports = category_page(
+            "Reports & Exports",
+            "Reports & Exports",
+            "Choose where generated reports are saved. This location is also used by report exports.",
+        )
+        report_card = section(
+            reports, 2, "Report directory", "Select an existing folder or enter a path to create.",
+        )
+        self.settings_report_path = ctk.CTkEntry(report_card, height=34)
+        self.settings_report_path.grid(
+            row=2, column=0, sticky="ew", padx=16, pady=(0, 10),
+        )
+        ctk.CTkButton(
+            report_card,
+            text="Browse…",
+            width=100,
+            height=30,
+            command=self._browse_report_directory,
+            fg_color=PALETTE["bg_card"],
+            hover_color=PALETTE["nav_hover"],
+        ).grid(row=3, column=0, sticky="w", padx=16, pady=(0, 14))
+
+        alerts = category_page(
+            "Alerts & Detection",
+            "Alerts & Detection",
+            "Review detected network events in the Alerts workspace.",
+        )
+        section(
+            alerts,
+            2,
+            "Detection workflow",
+            "Run analysis against the current capture session, review alert evidence, "
+            "and acknowledge or resolve alerts from the Alerts workspace.",
+        )
+
+        logging_page = category_page(
+            "Logging & Diagnostics",
+            "Logging & Diagnostics",
+            "Application diagnostics help explain capture, database, and report errors.",
+        )
+        section(logging_page, 2, "Log file", self.app.settings.log_path)
+        section(
+            logging_page,
+            3,
+            "Capture provider",
+            "Capture provider availability and interface discovery status are shown in the Dashboard.",
+        )
+
+        privacy = category_page(
+            "Privacy & Security",
+            "Privacy & Security",
+            "SHAHEEN stores packet and application data in the configured local database.",
+        )
+        section(
+            privacy,
+            2,
+            "Local data",
+            "Review the database and capture directory paths in Storage & Database. "
+            "Avoid importing captures that contain traffic you are not authorized to analyze.",
+        )
+
+        about = category_page(
+            "About SHAHEEN",
+            "About SHAHEEN",
+            "Network Traffic Analysis",
+        )
+        about_card = section(
+            about,
+            2,
+            self.app.settings.app_name,
+            "Network traffic analysis and security monitoring.",
+        )
+        ctk.CTkLabel(
+            about_card,
+            text="Developer: Ch Abdul Rehman Bajwa",
+            text_color=PALETTE["text_primary"],
+            font=ctk.CTkFont(size=11, weight="bold"),
+            anchor="w",
+        ).grid(row=2, column=0, sticky="w", padx=16, pady=(0, 4))
+        ctk.CTkLabel(
+            about_card,
+            text="Phone: +923284096190",
+            text_color=PALETTE["text_label"],
+            font=ctk.CTkFont(size=10),
+            anchor="w",
+        ).grid(row=3, column=0, sticky="w", padx=16, pady=(0, 14))
+
+    def _select_settings_category(self, name: str) -> None:
+        page = self._settings_pages.get(name)
+        if page is None:
+            return
+        for category, category_page in self._settings_pages.items():
+            if category == name:
+                category_page.grid(row=0, column=0, sticky="ew")
+                self._settings_nav[category].configure(
+                    fg_color=PALETTE["primary"],
+                    hover_color=PALETTE["primary_hover"],
+                    text_color=PALETTE["text_primary"],
+                )
+            else:
+                category_page.grid_remove()
+                self._settings_nav[category].configure(
+                    fg_color="transparent",
+                    hover_color=PALETTE["nav_hover"],
+                    text_color=PALETTE["text_label"],
+                )
+        self._current_settings_category = name
+
+    def _reset_settings_defaults(self) -> None:
+        if not messagebox.askyesno(
+            "Reset settings",
+            "Reset the editable settings to their defaults?",
+            parent=self,
+        ):
+            return
+        defaults = load_settings()
+        self.settings_theme.set(defaults.theme)
+        self.settings_capture_filter.delete(0, "end")
+        self.settings_capture_filter.insert(0, defaults.capture_filter)
+        self.settings_report_path.delete(0, "end")
+        self.settings_report_path.insert(0, defaults.report_path)
+        self._save_settings_form()
 
     def _browse_report_directory(self) -> None:
         selected = filedialog.askdirectory(
@@ -1535,7 +2591,19 @@ class ShaheenMainWindow(ctk.CTk):
         self._alert_rows = {int(row["id"]): row for row in rows}
         for item in self.alert_table.get_children():
             self.alert_table.delete(item)
-        for alert in rows:
+        severity_tags = {
+            "critical": PALETTE["text_danger"],
+            "high": PALETTE["danger"],
+            "medium": PALETTE["warning"],
+            "low": PALETTE["info"],
+        }
+        for severity, color in severity_tags.items():
+            self.alert_table.tag_configure(f"severity_{severity}", foreground=color)
+        for index, alert in enumerate(rows):
+            severity = str(alert["severity"]).lower()
+            tags = ["row_even" if index % 2 == 0 else "row_odd"]
+            if severity in severity_tags:
+                tags.append(f"severity_{severity}")
             self.alert_table.insert(
                 "", "end",
                 iid=str(alert["id"]),
@@ -1547,6 +2615,7 @@ class ShaheenMainWindow(ctk.CTk):
                     alert["destination_address"],
                     alert["status"],
                 ),
+                tags=tuple(tags),
             )
         self.alert_status_message.configure(
             text=f"Showing {len(rows)} persisted alert(s)."
@@ -1561,7 +2630,16 @@ class ShaheenMainWindow(ctk.CTk):
         try:
             alert_id = int(selected[0])
             alert = self._alert_rows[alert_id]
-            references = json.loads(alert["supporting_packets"] or "[]")
+            try:
+                references = json.loads(alert["supporting_packets"] or "[]")
+            except (TypeError, json.JSONDecodeError) as exc:
+                self.app.logger.exception("Could not read supporting packet references")
+                messagebox.showerror(
+                    "AI alert explanation",
+                    f"Supporting packet references are invalid: {exc}",
+                    parent=self,
+                )
+                return
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             self.app.logger.exception("Could not display selected alert")
             self.alert_details.delete("1.0", "end")
@@ -1711,6 +2789,9 @@ class ShaheenMainWindow(ctk.CTk):
             else "completed"
         )
         self._finish_live_session(status)
+        sample_added = False
+        if self._live_capture_started_at is not None:
+            self._live_capture_stopped_at = time.monotonic()
         self._capture_stop_pending = False
         self._capture_stop_result_received = False
         self._live_capture_active = False
@@ -1776,11 +2857,15 @@ class ShaheenMainWindow(ctk.CTk):
 
     def _select_interface(self, label: str) -> None:
         if label == "Select interface":
+            if hasattr(self, "live_iface_label"):
+                self.live_iface_label.configure(text="Interface: -")
             self.packet_label.configure(text="Choose a discovered adapter; it will not be switched automatically.")
             self._update_capture_controls()
             return
         interface = self._interface_by_label.get(label)
         if interface is not None:
+            if hasattr(self, "live_iface_label"):
+                self.live_iface_label.configure(text=f"Interface: {interface.name}")
             self.packet_label.configure(
                 text=f"Selected {interface.name}; capture availability is checked when capture starts."
             )
@@ -2022,6 +3107,10 @@ class ShaheenMainWindow(ctk.CTk):
     def _clear_filter(self) -> None:
         self.filter_entry.delete(0, "end")
         self._current_filter = ""
+        if self._live_capture_active and hasattr(self, "_live_packet_by_iid"):
+            self._refresh_live_packet_stream()
+        if hasattr(self, "live_filter_status"):
+            self.live_filter_status.configure(text="No active filter")
         self._current_page = 0
         self._matching_packet_count = len(self.packet_records)
         if self._current_session_id is not None and not self._live_capture_active:
@@ -2045,6 +3134,12 @@ class ShaheenMainWindow(ctk.CTk):
             self.app.logger.info("Rejected invalid display filter: %s", exc)
             return
         self._current_filter = expr
+        if self._live_capture_active and hasattr(self, "_live_packet_by_iid"):
+            self._refresh_live_packet_stream()
+        if hasattr(self, "live_filter_status"):
+            self.live_filter_status.configure(
+                text=f"Active filter: {expr}" if expr else "No active filter"
+            )
         if self._current_session_id is not None and not self._live_capture_active:
             self._current_page = 0
             self._load_session_page()
@@ -2411,6 +3506,21 @@ class ShaheenMainWindow(ctk.CTk):
             "end",
             packet.hex_dump if packet.raw_bytes else "Raw bytes are not available for this packet.",
         )
+        if (
+            getattr(self, "_current_nav", None) == "Live Capture"
+            and hasattr(self, "packet_protocol_stack")
+        ):
+            self.packet_protocol_stack.delete("1.0", "end")
+            stack_lines = []
+            for layer in packet.protocol_tree:
+                stack_lines.append(layer["name"])
+                stack_lines.extend(
+                    f"  {key}: {value}" for key, value in layer["fields"].items()
+                )
+            self.packet_protocol_stack.insert(
+                "end",
+                "\n".join(stack_lines) or "No protocol layers were decoded.",
+            )
 
     def _create_investigation(self) -> None:
         title = self.case_title_entry.get().strip()
@@ -2505,6 +3615,288 @@ class ShaheenMainWindow(ctk.CTk):
             return
         self.packet_label.configure(text=f"Investigation exported to {Path(path).name}")
 
+    def _style_report_history_table(self) -> None:
+        if not hasattr(self, "report_history_table"):
+            return
+        style = ttk.Style()
+        style.configure(
+            "ShaheenReports.Treeview",
+            background=PALETTE["bg_table"],
+            fieldbackground=PALETTE["bg_table"],
+            foreground=PALETTE["text_primary"],
+            rowheight=30,
+            font=("Segoe UI", 9),
+            borderwidth=0,
+            lightcolor=PALETTE["bg_table"],
+            darkcolor=PALETTE["bg_table"],
+        )
+        style.configure(
+            "ShaheenReports.Treeview.Heading",
+            background=PALETTE["bg_table_header"],
+            foreground=PALETTE["text_primary"],
+            relief="flat",
+            padding=(8, 8),
+            font=("Segoe UI", 9, "bold"),
+        )
+        style.map(
+            "ShaheenReports.Treeview",
+            background=[("selected", PALETTE["primary"])],
+            foreground=[("selected", "white")],
+        )
+        style.map(
+            "ShaheenReports.Treeview.Heading",
+            background=[("active", PALETTE["nav_hover"])],
+        )
+        style.configure(
+            "ShaheenReports.Vertical.TScrollbar",
+            background=PALETTE["bg_card_alt"],
+            troughcolor=PALETTE["bg_table"],
+            bordercolor=PALETTE["bg_table"],
+            arrowcolor=PALETTE["text_secondary"],
+        )
+        style.configure(
+            "ShaheenReports.Horizontal.TScrollbar",
+            background=PALETTE["bg_card_alt"],
+            troughcolor=PALETTE["bg_table"],
+            bordercolor=PALETTE["bg_table"],
+            arrowcolor=PALETTE["text_secondary"],
+        )
+        self.report_history_table.configure(style="ShaheenReports.Treeview")
+        self.report_history_table.tag_configure("row_even", background=PALETTE["bg_table"])
+        self.report_history_table.tag_configure("row_odd", background=PALETTE["bg_table_alt"])
+
+    def _update_report_selection_ui(self, _event: object = None) -> None:
+        if not hasattr(self, "report_history_table"):
+            return
+        selected = self.report_history_table.selection()
+        if hasattr(self, "report_download_button"):
+            self.report_download_button.configure(
+                state="normal" if selected else "disabled"
+            )
+        if hasattr(self, "report_selection_label"):
+            if selected:
+                report_path = self._report_paths_by_iid.get(selected[0])
+                selection_text = (
+                    f"Selected: {report_path.name}"
+                    if report_path is not None
+                    else "Selected report is unavailable"
+                )
+            else:
+                selection_text = "Select a report to download"
+            self.report_selection_label.configure(text=selection_text)
+
+    def _load_report_history(self) -> None:
+        if not hasattr(self, "report_history_table"):
+            return
+        table = self.report_history_table
+        for item in table.get_children():
+            table.delete(item)
+        self._report_paths_by_iid: dict[str, Path] = {}
+        report_dir = Path(self.app.settings.report_path)
+        report_dir.mkdir(parents=True, exist_ok=True)
+        files: list[tuple[Path, str, str, str, str, str, str]] = []
+        if report_dir.exists():
+            for path in sorted(report_dir.rglob("*"), key=lambda item: item.stat().st_mtime, reverse=True):
+                if not path.is_file():
+                    continue
+                suffix = path.suffix.lower()
+                if suffix not in {".pdf", ".csv", ".json", ".html"}:
+                    continue
+                timestamp = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+                size = path.stat().st_size
+                files.append(
+                    (
+                        path,
+                        str(len(files) + 1),
+                        path.name,
+                        suffix.upper().lstrip("."),
+                        timestamp.strftime("%Y-%m-%d %H:%M"),
+                        "Current reporting period",
+                        f"{size:,} B",
+                    )
+                )
+        for index, (path, *row) in enumerate(files[:50]):
+            item_id = f"report-{index}"
+            self._report_paths_by_iid[item_id] = path
+            table.insert(
+                "",
+                "end",
+                iid=item_id,
+                values=(row[0], row[1], row[2], row[3], row[4], row[2], row[5], "Ready"),
+                tags=("row_even" if index % 2 == 0 else "row_odd",),
+            )
+        if hasattr(self, "report_empty_label"):
+            if files:
+                self.report_empty_label.place_forget()
+            else:
+                self.report_empty_label.place(relx=0.5, rely=0.5, anchor="center")
+        self._update_report_selection_ui()
+        self._style_report_history_table()
+
+    def _download_selected_report(self) -> None:
+        selected = self.report_history_table.selection()
+        if not selected:
+            self.packet_label.configure(text="Select a generated report to download.")
+            return
+        report_path = self._report_paths_by_iid.get(selected[0])
+        if report_path is None or not report_path.is_file():
+            self.packet_label.configure(
+                text="The selected report is no longer available. Refresh the report list."
+            )
+            return
+
+        extension = report_path.suffix.lower()
+        destination = filedialog.asksaveasfilename(
+            defaultextension=extension,
+            filetypes=[(f"{extension.lstrip('.').upper()} files", f"*{extension}")],
+            title="Download generated report",
+            initialdir=str(report_path.parent),
+            initialfile=report_path.name,
+        )
+        if not destination:
+            return
+
+        destination_path = Path(destination)
+        try:
+            if destination_path.resolve() == report_path.resolve():
+                self.packet_label.configure(
+                    text=f"{report_path.name} is already in that location."
+                )
+                return
+            shutil.copy2(report_path, destination_path)
+        except Exception as exc:
+            self.packet_label.configure(text=f"Report download failed: {exc}")
+            self.app.logger.exception("Report download failed")
+            return
+        self.packet_label.configure(
+            text=f"Report downloaded to {destination_path}"
+        )
+
+    def _refresh_reports(self) -> None:
+        if not hasattr(self, "rkpi_sess"):
+            return
+        session_total = int(
+            self.app.db.execute("SELECT COUNT(*) FROM capture_sessions").fetchone()[0]
+        )
+        packet_total = int(
+            self.app.db.execute("SELECT COALESCE(SUM(packet_count), 0) FROM capture_sessions").fetchone()[0]
+        )
+        alert_total = int(self.app.db.execute("SELECT COUNT(*) FROM alerts").fetchone()[0])
+        critical_total = int(
+            self.app.db.execute(
+                "SELECT COUNT(*) FROM alerts WHERE UPPER(COALESCE(severity, '')) = 'CRITICAL'"
+            ).fetchone()[0]
+        )
+        investigation_total = int(
+            self.app.db.execute("SELECT COUNT(*) FROM investigations").fetchone()[0]
+        )
+        report_dir = Path(self.app.settings.report_path)
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_total = 0 if not report_dir.exists() else sum(
+            1
+            for item in report_dir.rglob("*")
+            if item.is_file() and item.suffix.lower() in {".pdf", ".csv", ".json", ".html"}
+        )
+
+        self.rkpi_sess.configure(text=f"{session_total:,}")
+        self.rkpi_sess_s.configure(text="Sessions in database")
+        self.rkpi_pkt.configure(text=f"{packet_total:,}")
+        self.rkpi_pkt_s.configure(text="Packets captured")
+        self.rkpi_alt.configure(text=f"{alert_total:,}")
+        self.rkpi_alt_s.configure(text=f"{critical_total:,} critical")
+        self.rkpi_crit.configure(text=f"{critical_total:,}")
+        self.rkpi_crit_s.configure(text="High-risk findings")
+        self.rkpi_inv.configure(text=f"{investigation_total:,}")
+        self.rkpi_inv_s.configure(text="Open and archived cases")
+        self.rkpi_rep.configure(text=f"{report_total:,}")
+        self.rkpi_rep_s.configure(text="Reports in output folder")
+        try:
+            self._load_report_history()
+        except Exception:
+            self.app.logger.exception("Could not refresh report history")
+
+    def _generate_comprehensive_report(self) -> None:
+        report_type = self.report_type_menu.get()
+        report_format = self.report_format_menu.get().lower()
+        report_dir = Path(self.app.settings.report_path)
+        report_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in report_type).strip("_").lower()
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        output_path = report_dir / f"{safe_name or 'report'}_{timestamp}.{report_format}"
+        session_total = int(self.app.db.execute("SELECT COUNT(*) FROM capture_sessions").fetchone()[0])
+        packet_total = int(self.app.db.execute("SELECT COALESCE(SUM(packet_count), 0) FROM capture_sessions").fetchone()[0])
+        alert_total = int(self.app.db.execute("SELECT COUNT(*) FROM alerts").fetchone()[0])
+        critical_total = int(
+            self.app.db.execute(
+                "SELECT COUNT(*) FROM alerts WHERE UPPER(COALESCE(severity, '')) = 'CRITICAL'"
+            ).fetchone()[0]
+        )
+        investigation_total = int(
+            self.app.db.execute("SELECT COUNT(*) FROM investigations").fetchone()[0]
+        )
+        summary = {
+            "report_type": report_type,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "total_capture_sessions": session_total,
+            "total_packets": packet_total,
+            "total_alerts": alert_total,
+            "critical_alerts": critical_total,
+            "investigations": investigation_total,
+            "source_path": self.app.settings.report_path,
+        }
+        try:
+            if report_format == "pdf":
+                PDFReport(str(output_path)).generate(
+                    report_type,
+                    [
+                        f"Generated: {summary['generated_at']}",
+                        f"Capture sessions: {session_total}",
+                        f"Packets: {packet_total}",
+                        f"Alerts: {alert_total}",
+                        f"Critical alerts: {critical_total}",
+                        f"Investigations: {investigation_total}",
+                    ],
+                )
+            elif report_format == "csv":
+                CSVExporter.export_rows(
+                    str(output_path),
+                    [summary],
+                    fieldnames=[
+                        "report_type",
+                        "generated_at",
+                        "total_capture_sessions",
+                        "total_packets",
+                        "total_alerts",
+                        "critical_alerts",
+                        "investigations",
+                        "source_path",
+                    ],
+                )
+            elif report_format == "json":
+                output_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+            elif report_format == "html":
+                output_path.write_text(
+                    "\n".join(
+                        [
+                            "<html><head><meta charset='utf-8'><title>Shaheen Report</title></head><body>",
+                            f"<h1>{report_type}</h1>",
+                            "<ul>",
+                            *[f"<li><strong>{key.replace('_', ' ').title()}:</strong> {value}</li>" for key, value in summary.items()],
+                            "</ul>",
+                            "</body></html>",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+            else:
+                raise ValueError(f"Unsupported report format: {report_format}")
+        except Exception as exc:
+            self.packet_label.configure(text=f"Report generation failed: {exc}")
+            self.app.logger.exception("Report generation failed")
+            return
+        self.packet_label.configure(text=f"{report_type} exported to {output_path.name}")
+        self._refresh_reports()
+
     def _start_live_capture(self) -> None:
         if self._page_load_active:
             self.packet_label.configure(text="Wait for the current display filter to finish.")
@@ -2544,6 +3936,22 @@ class ShaheenMainWindow(ctk.CTk):
             self._packet_storage_worker = storage_worker
             self._packets_persisted = 0
             self._metadata_packets_dropped = 0
+            self._live_capture_started_at = time.monotonic()
+            self._live_capture_stopped_at = None
+            self._last_live_capture_session_id = session_id
+            self._last_live_alert_refresh = 0.0
+            self._live_bytes_captured = 0
+            self._live_protocol_counts.clear()
+            self._live_traffic_samples.clear()
+            self._live_traffic_last_sample_at = self._live_capture_started_at
+            self._live_traffic_last_packets = self.capture_manager.stats.packets_accepted
+            self._live_traffic_last_bytes = 0
+            self._live_traffic_final_sampled = False
+            self.lkpi_lalerts.configure(text="0")
+            self.lkpi_lalerts_s.configure(text="Alerts for this session")
+            if hasattr(self, "_live_packet_by_iid"):
+                self._live_packet_by_iid.clear()
+                self.packet_tree.delete(*self.packet_tree.get_children(""))
             self.packet_records.clear()
             self.displayed_packets.clear()
             self.selected_packet = None
@@ -2554,6 +3962,7 @@ class ShaheenMainWindow(ctk.CTk):
             self._display_paused = False
             self._display_paused_packets = 0
             self._update_capture_controls()
+            self._refresh_live_capture_metrics()
             self._render_packet_table([])
             self.packet_label.configure(
                 text=f"Capture started on {interface.name}; waiting for packets. "
@@ -2588,6 +3997,8 @@ class ShaheenMainWindow(ctk.CTk):
             self.packet_label.configure(text=f"Capture stop failed: {exc}")
             self.app.logger.exception("Stopping capture failed")
         finally:
+            if self._live_capture_started_at is not None:
+                self._live_capture_stopped_at = time.monotonic()
             self._finish_live_session(
                 "failed"
                 if stop_failed
@@ -2762,6 +4173,263 @@ class ShaheenMainWindow(ctk.CTk):
             )
         )
 
+    def _refresh_live_capture_metrics(self) -> None:
+        if not hasattr(self, "lkpi_recv"):
+            return
+        stats = self.capture_manager.stats
+        persisted = (
+            self._packet_storage_worker.packets_persisted
+            if self._packet_storage_worker is not None
+            else self._packets_persisted
+        )
+        dropped = (
+            self._packet_storage_worker.dropped_packets
+            if self._packet_storage_worker is not None
+            else self._metadata_packets_dropped
+        )
+        now = time.monotonic()
+        start = self._live_capture_started_at
+        stop = self._live_capture_stopped_at
+        elapsed = (
+            max(0.0, (stop if stop is not None else now) - start)
+            if start is not None
+            else 0.0
+        )
+        rate = stats.packets_accepted / elapsed if elapsed > 0 else 0.0
+        total_bytes = self._live_bytes_captured
+        if total_bytes >= 1024 * 1024:
+            data_text = f"{total_bytes / (1024 * 1024):.2f} MB"
+        elif total_bytes >= 1024:
+            data_text = f"{total_bytes / 1024:.1f} KB"
+        else:
+            data_text = f"{total_bytes:,} B"
+
+        self.lkpi_recv.configure(text=f"{stats.packets_received:,}")
+        self.lkpi_recv_s.configure(text="Packets seen by capture provider")
+        self.lkpi_acc.configure(text=f"{stats.packets_accepted:,}")
+        self.lkpi_acc_s.configure(text=f"{rate:,.1f} accepted packets / sec")
+        self.lkpi_pers.configure(text=f"{persisted:,}")
+        self.lkpi_pers_s.configure(
+            text=f"{dropped:,} storage drops" if dropped else "Saved to database"
+        )
+        self.lkpi_pps.configure(text=f"{rate:,.1f}")
+        self.lkpi_pps_s.configure(text="Average since capture started")
+        self.lkpi_data.configure(text=data_text)
+        self.lkpi_data_s.configure(text=f"{total_bytes:,} captured bytes")
+        if self._live_capture_started_at is not None:
+            seconds = int(elapsed)
+            hours, remainder = divmod(seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            self.live_duration_label.configure(
+                text=f"Duration: {hours:02d}:{minutes:02d}:{seconds:02d}"
+            )
+
+        sample_added = False
+        if self._live_capture_started_at is not None:
+            sample_at = self._live_traffic_last_sample_at
+            final_sampled = getattr(self, "_live_traffic_final_sampled", False)
+            if sample_at is None:
+                self._live_traffic_last_sample_at = now
+                self._live_traffic_last_packets = stats.packets_accepted
+                self._live_traffic_last_bytes = total_bytes
+            elif now - sample_at >= 1.0 or (stop is not None and not final_sampled):
+                sample_elapsed = max(now - sample_at, 0.001)
+                packet_delta = max(
+                    0,
+                    stats.packets_accepted - self._live_traffic_last_packets,
+                )
+                byte_delta = max(
+                    0,
+                    total_bytes - self._live_traffic_last_bytes,
+                )
+                sample_time = datetime.now().strftime("%H:%M:%S")
+                self._live_traffic_samples.append(
+                    (
+                        sample_time,
+                        packet_delta / sample_elapsed,
+                        byte_delta / sample_elapsed,
+                    )
+                )
+                sample_added = True
+                self._live_traffic_last_sample_at = now
+                self._live_traffic_last_packets = stats.packets_accepted
+                self._live_traffic_last_bytes = total_bytes
+                if stop is not None:
+                    self._live_traffic_final_sampled = True
+        if sample_added:
+            self._render_live_traffic_graph()
+        if hasattr(self, "live_traffic_summary"):
+            self.live_traffic_summary.configure(
+                text=(
+                    f"{rate:,.1f} packets/sec avg  ·  {data_text} captured  ·  "
+                    f"{stats.packets_dropped_from_display_queue:,} display drops"
+                )
+            )
+        if hasattr(self, "live_proto"):
+            protocol_lines = [
+                f"{protocol}: {count:,} packets"
+                for protocol, count in self._live_protocol_counts.most_common(6)
+            ]
+            self.live_proto.configure(
+                text="\n".join(protocol_lines) if protocol_lines else "No protocol data available."
+            )
+
+        session_id = self._live_session_id or self._last_live_capture_session_id
+        if session_id is not None and now - self._last_live_alert_refresh >= 1.0:
+            self._last_live_alert_refresh = now
+            try:
+                alert_count = self.app.db.execute(
+                    "SELECT COUNT(*) FROM alerts WHERE capture_session_id = ?",
+                    (session_id,),
+                ).fetchone()[0]
+            except sqlite3.Error as exc:
+                self.app.logger.exception(
+                    "Could not refresh live capture alert count for session %s",
+                    session_id,
+                )
+                self.lkpi_lalerts.configure(text="Unavailable")
+                self.lkpi_lalerts_s.configure(text=str(exc))
+            else:
+                self.lkpi_lalerts.configure(text=f"{alert_count:,}")
+                self.lkpi_lalerts_s.configure(text="Alerts for this session")
+
+    def _render_live_traffic_graph(self) -> None:
+        canvas = getattr(self, "live_traffic_graph", None)
+        if canvas is None:
+            return
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 320)
+        height = max(canvas.winfo_height(), 84)
+        samples = list(getattr(self, "_live_traffic_samples", []))
+        if not samples:
+            canvas.create_text(
+                width / 2,
+                height / 2,
+                text="Start capture to chart packets/sec and KB/sec",
+                fill=PALETTE["text_label"],
+                font=("TkDefaultFont", 9),
+            )
+            return
+
+        left, right, top, bottom = 38, width - 12, 16, height - 19
+        plot_height = max(20, bottom - top)
+        packet_rates = [sample[1] for sample in samples]
+        byte_rates = [sample[2] / 1024 for sample in samples]
+        packet_max = max(packet_rates) or 1.0
+        byte_max = max(byte_rates) or 1.0
+        for fraction in (0, 0.5, 1):
+            y = bottom - plot_height * fraction
+            canvas.create_line(
+                left,
+                y,
+                right,
+                y,
+                fill=PALETTE["border"],
+                dash=(2, 3),
+            )
+        canvas.create_text(
+            left,
+            7,
+            text=f"{packet_max:,.0f} pkt/s",
+            anchor="w",
+            fill=PALETTE["primary"],
+            font=("TkDefaultFont", 7, "bold"),
+        )
+        canvas.create_text(
+            right,
+            7,
+            text=f"{byte_max:,.1f} KB/s",
+            anchor="e",
+            fill="#06B6D4",
+            font=("TkDefaultFont", 7, "bold"),
+        )
+
+        packet_points: list[float] = []
+        byte_points: list[float] = []
+        for index, (packets_per_second, kilobytes_per_second) in enumerate(
+            zip(packet_rates, byte_rates)
+        ):
+            x = (
+                (left + right) / 2
+                if len(samples) == 1
+                else left + (right - left) * index / (len(samples) - 1)
+            )
+            packet_y = bottom - plot_height * packets_per_second / packet_max
+            byte_y = bottom - plot_height * kilobytes_per_second / byte_max
+            packet_points.extend((x, packet_y))
+            byte_points.extend((x, byte_y))
+        for points, color in (
+            (packet_points, PALETTE["primary"]),
+            (byte_points, "#06B6D4"),
+        ):
+            if len(points) >= 4:
+                canvas.create_line(*points, fill=color, width=2, smooth=True)
+            elif len(points) == 2:
+                x, y = points
+                canvas.create_oval(
+                    x - 2, y - 2, x + 2, y + 2, fill=color, outline=color,
+                )
+        for index in sorted({0, len(samples) - 1}):
+            x = (
+                (left + right) / 2
+                if len(samples) == 1
+                else left + (right - left) * index / (len(samples) - 1)
+            )
+            canvas.create_text(
+                x,
+                height - 7,
+                text=samples[index][0],
+                fill=PALETTE["text_muted"],
+                font=("TkDefaultFont", 7),
+            )
+
+    def _append_live_packet_stream(self, packets: list[PacketRecord]) -> None:
+        if not packets:
+            return
+        expression = self._current_filter
+        row_index = len(self.packet_tree.get_children(""))
+        for packet in packets:
+            if expression and not evaluate_filter(packet, expression):
+                continue
+            iid = f"live-{packet.packet_number}"
+            if self.packet_tree.exists(iid):
+                continue
+            self.packet_tree.insert(
+                "",
+                "end",
+                iid=iid,
+                values=self._packet_table_values(packet),
+                tags=(
+                    "row_even" if row_index % 2 == 0 else "row_odd",
+                ),
+            )
+            self._live_packet_by_iid[iid] = packet
+            row_index += 1
+        self.packet_tree.tag_configure("row_even", background=PALETTE["bg_table"])
+        self.packet_tree.tag_configure("row_odd", background=PALETTE["bg_table_alt"])
+        children = self.packet_tree.get_children("")
+        excess = len(children) - 500
+        if excess > 0:
+            expired = children[:excess]
+            self.packet_tree.delete(*expired)
+            for iid in expired:
+                self._live_packet_by_iid.pop(iid, None)
+
+    def _refresh_live_packet_stream(self) -> None:
+        children = self.packet_tree.get_children("")
+        if children:
+            self.packet_tree.delete(*children)
+        self._live_packet_by_iid.clear()
+        self._append_live_packet_stream(self.packet_records[-500:])
+
+    def _on_live_packet_tree_select(self, _event=None) -> None:
+        selection = self.packet_tree.selection()
+        if not selection:
+            return
+        packet = self._live_packet_by_iid.get(selection[0])
+        if packet is not None:
+            self._show_packet_details(packet)
+
     def _poll_capture_queue(self) -> None:
         live_packets = []
         for _ in range(500):
@@ -2898,6 +4566,8 @@ class ShaheenMainWindow(ctk.CTk):
             kind, payload = item
             if kind == "error":
                 self.packet_label.configure(text=f"Capture error: {payload}")
+                if self._live_capture_started_at is not None:
+                    self._live_capture_stopped_at = time.monotonic()
                 self._live_capture_active = False
                 self._finish_live_session("failed")
                 self._update_capture_controls()
@@ -2912,6 +4582,8 @@ class ShaheenMainWindow(ctk.CTk):
             elif kind == "packet_error":
                 self.app.logger.warning("Packet %s could not be decoded: %s", *payload)
             elif kind == "packet":
+                self._live_bytes_captured += payload.packet_length
+                self._live_protocol_counts[payload.protocol] += 1
                 if self._display_paused:
                     self._display_paused_packets += 1
                 else:
@@ -2923,7 +4595,8 @@ class ShaheenMainWindow(ctk.CTk):
             if self._live_capture_active and len(self.packet_records) > self.MAX_PACKET_ROWS:
                 excess = len(self.packet_records) - self.MAX_PACKET_ROWS
                 del self.packet_records[:excess]
-            expr = self.filter_entry.get().strip()
+            self._append_live_packet_stream(live_packets)
+            expr = self._current_filter
             try:
                 matching_packets = [
                     packet
@@ -2933,10 +4606,11 @@ class ShaheenMainWindow(ctk.CTk):
             except FilterError as exc:
                 matching_packets = []
                 self.packet_label.configure(text=f"Invalid display filter: {exc}")
-            self._render_packet_table(
-                matching_packets,
-                preserve_selection=True,
-            )
+            if self._current_nav != "Live Capture":
+                self._render_packet_table(
+                    matching_packets,
+                    preserve_selection=True,
+                )
             self.packet_label.configure(
                 text=f"Live buffer retains the latest {len(self.packet_records)} received packet(s); "
                 f"{len(matching_packets)} match the current display filter. "
@@ -2944,6 +4618,7 @@ class ShaheenMainWindow(ctk.CTk):
             )
         if self._live_capture_active:
             self._update_status_bar("running")
+        self._refresh_live_capture_metrics()
         self.after(200, self._poll_capture_queue)
 
     def _on_close(self) -> None:

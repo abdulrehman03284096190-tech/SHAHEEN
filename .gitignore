@@ -11,6 +11,7 @@ reports_output/
 build/
 dist/
 *.spec
+!SHAHEEN_RELEASE/SHAHEEN.spec
 captures/*.pcap
 captures/*.pcapng
 .andromity/
